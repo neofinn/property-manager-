@@ -9,6 +9,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { DatabaseSync } = require('node:sqlite');
 const { HttpError } = require('./store');
+const { normalizePhone, cleanText, validateSignup } = require('./account-rules');
 
 const SESSION_DAYS = 30;
 const SCRYPT_PARAMS = { N: 16384, r: 8, p: 1, keylen: 64 };
@@ -34,22 +35,6 @@ const DUMMY_HASH = hashPassword(crypto.randomBytes(16).toString('hex'));
 
 function sha256(value) {
   return crypto.createHash('sha256').update(value).digest('hex');
-}
-
-// "+91 98765-43210" -> "+919876543210". A bare 10-digit number gets the default country code.
-function normalizePhone(raw, defaultCountryCode) {
-  if (typeof raw !== 'string' && typeof raw !== 'number') return null;
-  const s = String(raw).trim();
-  let digits = s.replace(/\D/g, '');
-  if (!s.startsWith('+')) {
-    digits = digits.replace(/^0+/, '');
-    if (digits.length === 10 && defaultCountryCode) digits = `${defaultCountryCode}${digits}`;
-  }
-  return digits.length >= 10 && digits.length <= 15 ? `+${digits}` : null;
-}
-
-function cleanText(value, max) {
-  return typeof value === 'string' ? value.trim().replace(/\s+/g, ' ').slice(0, max) : '';
 }
 
 class Accounts {
@@ -96,20 +81,8 @@ class Accounts {
   }
 
   signup(input) {
-    const errors = {};
-    const company_name = cleanText(input.company_name, 120);
-    const manager_name = cleanText(input.manager_name, 120);
-    const phone = normalizePhone(input.phone, this.defaultCountryCode);
-    const password = typeof input.password === 'string' ? input.password : '';
-
-    if (company_name.length < 2) errors.company_name = 'Company name is required';
-    if (manager_name.length < 2) errors.manager_name = 'Manager name is required';
-    if (!phone) errors.phone = 'Enter a valid phone number';
-    if (password.length < 8) errors.password = 'Password must be at least 8 characters';
-    else if (password.length > 200) errors.password = 'Password is too long';
-    if (this.inviteCode && cleanText(input.invite_code, 100) !== this.inviteCode) {
-      errors.invite_code = 'Invite code is not valid';
-    }
+    const { values, errors } = validateSignup(input, { defaultCountryCode: this.defaultCountryCode, inviteCode: this.inviteCode });
+    const { company_name, manager_name, phone, password } = values;
     if (phone && this.db.prepare('SELECT 1 FROM companies WHERE phone = ?').get(phone)) {
       errors.phone = 'An account with this phone number already exists. Please log in.';
     }

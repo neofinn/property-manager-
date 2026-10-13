@@ -76,6 +76,16 @@ stored under `/data`, so give it a **persistent volume** there. Without one,
 everything is lost when the server restarts. Serve it over **HTTPS**, which
 every host below does for you.
 
+### claude.ai demo link (no server needed)
+
+`npm install && npm run build:demo` builds `dist/property-manager-demo.html`,
+one page that holds the whole app: the pages, the API and a SQLite engine.
+Published as a claude.ai artifact, each tester signs up and their company's
+data is saved privately in the artifact's per-person storage. Sign-ups and
+feedback are saved where only the owner can read them. Share the artifact
+with testers as **Contributor** so they can save. The page can only be shared
+inside your claude.ai organization, or by email invitation.
+
 ### GitHub Codespaces (free, runs directly on GitHub)
 
 The fastest way to get a link you can share. It's free for about 60 hours a

@@ -11,7 +11,11 @@
     "start": "node --disable-warning=ExperimentalWarning server.js",
     "seed": "node --disable-warning=ExperimentalWarning scripts/seed.js",
     "test": "node --disable-warning=ExperimentalWarning --test",
-    "feedback": "node --disable-warning=ExperimentalWarning scripts/feedback.js"
+    "feedback": "node --disable-warning=ExperimentalWarning scripts/feedback.js",
+    "build:demo": "node scripts/build-demo.js"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "devDependencies": {
+    "sql.js": "^1.10.3"
+  }
 }

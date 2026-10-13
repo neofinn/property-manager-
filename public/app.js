@@ -3,6 +3,8 @@
 (() => {
   const state = { config: null, optionsCache: {}, view: null, query: {} };
   const $ = (sel, root = document) => root.querySelector(sel);
+  // The claude.ai demo runs both pages in one document and swaps between them.
+  const go = (path) => (window.PM_NAVIGATE ? window.PM_NAVIGATE(path) : location.replace(path));
 
   const NAV = [
     { id: 'dashboard', label: 'Dashboard', icon: '◧' },
@@ -119,7 +121,7 @@
       body: options.body ? JSON.stringify(options.body) : undefined,
     });
     if (res.status === 401) {
-      location.replace('/login');
+      go('/login');
       throw new Error('Please log in');
     }
     const data = res.headers.get('content-type')?.includes('json') ? await res.json() : await res.text();
@@ -676,6 +678,17 @@
 
   // ---------- actions ----------
 
+  // In-page yes/no question (browser confirm() popups are blocked in some views).
+  function confirmAction(message, actionLabel) {
+    const dialog = $('#confirm-dialog');
+    $('#confirm-message').textContent = message;
+    $('#confirm-ok').textContent = actionLabel;
+    dialog.showModal();
+    return new Promise((resolve) => {
+      dialog.addEventListener('close', () => resolve(dialog.returnValue === 'ok'), { once: true });
+    });
+  }
+
   async function quickUpdate(name, id, body, message) {
     try {
       await api(`${name}/${id}`, { method: 'PATCH', body });
@@ -713,7 +726,7 @@
     }
     if (action === 'edit') return openForm(name, await api(`${name}/${id}`));
     if (action === 'delete') {
-      if (!confirm(`Delete this ${resource(name).singular.toLowerCase()}? This cannot be undone.`)) return;
+      if (!(await confirmAction(`Delete this ${resource(name).singular.toLowerCase()}? This cannot be undone.`, 'Delete'))) return;
       try {
         await api(`${name}/${id}`, { method: 'DELETE' });
         state.optionsCache = {};
@@ -729,7 +742,7 @@
         await navigator.clipboard.writeText(el.dataset.text);
         toast('Reminder text copied');
       } catch {
-        prompt('Copy the reminder text:', el.dataset.text);
+        toast('Copying is blocked here. Select the text in the reminder and copy it.', true);
       }
       return;
     }
@@ -770,7 +783,7 @@
 
   $('#logout-btn').addEventListener('click', async () => {
     await api('auth/logout', { method: 'POST' }).catch(() => {});
-    location.replace('/login');
+    go('/login');
   });
 
   const feedbackDialog = $('#feedback-dialog');
@@ -792,18 +805,26 @@
     }
   });
 
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+  if ('serviceWorker' in navigator && !window.PM_DEMO) navigator.serviceWorker.register('/sw.js').catch(() => {});
   $('#dialog').addEventListener('cancel', () => closeDialog());
   $('#menu-btn').addEventListener('click', () => document.body.classList.toggle('nav-open'));
   window.addEventListener('hashchange', route);
 
-  api('config')
-    .then((config) => {
-      state.config = config;
-      $('#account-name').textContent = `${config.company.company_name} · ${config.company.manager_name}`;
-      route();
-    })
-    .catch((err) => {
-      $('#main').innerHTML = `<p class="form-error">Could not load the app: ${esc(err.message)}</p>`;
-    });
+  function start() {
+    state.optionsCache = {};
+    $('#main').innerHTML = '<p class="loading">Loading…</p>';
+    return api('config')
+      .then((config) => {
+        state.config = config;
+        moneyFmt = null;
+        $('#account-name').textContent = `${config.company.company_name} · ${config.company.manager_name}`;
+        route();
+      })
+      .catch((err) => {
+        $('#main').innerHTML = `<p class="form-error">Could not load the app: ${esc(err.message)}</p>`;
+      });
+  }
+
+  if (window.PM_DEMO) window.PM_startApp = start;
+  else start();
 })();

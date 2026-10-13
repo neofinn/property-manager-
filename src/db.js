@@ -1,8 +1,5 @@
 'use strict';
 
-const fs = require('node:fs');
-const path = require('node:path');
-const { DatabaseSync } = require('node:sqlite');
 const { resources } = require('./schema');
 
 const SQL_TYPES = {
@@ -40,13 +37,23 @@ function createTableSql(name, def) {
   return `CREATE TABLE IF NOT EXISTS ${name} (\n  ${cols.join(',\n  ')}\n)`;
 }
 
+// Opens (creating if needed) a company's database file in `dataDir`.
 function open(dataDir) {
+  // Required here so the browser demo can bundle initSchema without Node modules.
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const { DatabaseSync } = require('node:sqlite');
   const inMemory = dataDir === ':memory:';
   if (!inMemory) fs.mkdirSync(path.join(dataDir, 'uploads'), { recursive: true });
   const db = new DatabaseSync(inMemory ? ':memory:' : path.join(dataDir, 'crm.sqlite'));
-  db.exec('PRAGMA foreign_keys = ON');
   if (!inMemory) db.exec('PRAGMA journal_mode = WAL');
+  return initSchema(db);
+}
 
+// Creates and migrates the CRM tables. Works with node:sqlite and with the
+// sql.js adapter used by the browser demo.
+function initSchema(db) {
+  db.exec('PRAGMA foreign_keys = ON');
   for (const [name, def] of Object.entries(resources)) {
     db.exec(createTableSql(name, def));
     // Add columns introduced after the table was first created.
@@ -84,4 +91,4 @@ function open(dataDir) {
   return db;
 }
 
-module.exports = { open, columnsFor, FILE_COLUMNS };
+module.exports = { open, initSchema, columnsFor, FILE_COLUMNS };
