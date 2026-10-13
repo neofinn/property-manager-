@@ -12,14 +12,27 @@ No dependencies: it runs on Node.js alone, using the built-in SQLite module.
 | --- | --- |
 | **Dashboard** | Occupancy, rent collected vs expected this month, overdue rent, unpaid bills, and everything that needs attention |
 | **Reminders** | Rent due, overdue and upcoming; bills due; agreements expiring within 60 days; documents expiring or awaiting verification; upcoming appointments. Look ahead from today up to 60 days |
-| **Properties** | Name, type, address, units, expected rent, status (vacant/occupied/maintenance), owner |
-| **Tenants** | Contact details, property and unit, move-in and move-out dates, ID type and number, emergency contact |
-| **Agreements** | Property and tenant, start and end dates, monthly rent, security deposit, rent due day, notice period |
+| **Properties** | Name, type (PG, Independent House, BnB, Apartment, Villa, Commercial…), address, expected rent, status, owner. PG/BnB properties also record who they're for (gents/ladies/co-living) and whether food is included |
+| **Bed board (PG)** | One screen for each PG/BnB showing every room and bed: vacant, occupied (with the tenant's name) or reserved/under maintenance. Click a vacant bed to add a tenant to it |
+| **Rooms** | Room number, floor, sharing (single/double/triple…), number of beds, rent per bed or per room, AC, attached bathroom. Beds are created automatically |
+| **Beds** | Each bed in a room, with its own rent and status, and who is staying in it |
+| **Tenants** | Contact details, property, room and bed (for PG/BnB) or unit, move-in and move-out dates, ID type and number, emergency contact |
+| **Agreements** | Property (and room/bed for PG), tenant, start and end dates, monthly rent, security deposit, rent due day, notice period |
 | **Rent payments** | Payments per rent month, with method (cash/UPI/bank/cheque/card) and transaction reference. Partial payments are supported |
 | **Bills** | Electricity, water, gas, internet, maintenance, property tax, insurance, repairs. Due dates, paid by owner or tenant, paid status |
 | **Documents** | Uploaded ID proofs, police verification, agreements, deeds and receipts linked to a tenant, property or agreement. Tracks who verified each one and when, and its expiry date |
 | **Contacts** | Owners, plumbers, electricians, agents, lawyers and others, with their available hours |
 | **Timings** | Property visits, maintenance, inspections, rent collection, move-in and move-out appointments |
+
+### PG and BnB: room-wise and bed-wise
+
+PG tenants are tracked bed by bed and BnB guests room by room:
+
+1. Add a property with type **PG** or **BnB**.
+2. Add its rooms with the number of beds and the rent per bed. Beds named *Bed 1, Bed 2…* are created for you, and you can rename them, for example to *Upper* or *Window*.
+3. Assign tenants and agreements to a bed, or to a room that has no beds. In the form, the Room list shows only that property's rooms and the Bed list shows only that room's beds and who is in each. Picking a bed fills in the room and property. A new agreement takes the bed's rent unless you enter one.
+
+The app won't put two active tenants on one bed, or give a bed two active agreements whose dates overlap. When an agreement covering today is saved, the tenant's room and bed are updated to match. Rent reminders name the exact bed, for example *"Sunrise PG, Room 101, Bed 2"*. The dashboard shows how many PG beds are filled.
 
 ### Rent reminders
 
@@ -77,7 +90,7 @@ test/                API tests (node:test)
 ## API
 
 All endpoints return JSON. `:resource` is one of `properties`, `tenants`,
-`agreements`, `rent_payments`, `bills`, `contacts`, `documents`, `schedules`.
+`rooms`, `beds`, `agreements`, `rent_payments`, `bills`, `contacts`, `documents`, `schedules`.
 
 | Method & path | Description |
 | --- | --- |

@@ -203,3 +203,62 @@ test('basic auth when a password is configured', async () => {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('PG rooms and beds: auto beds, linking, occupancy and rent', async () => {
+  const pg = (await call('POST', '/api/properties', { name: 'Test PG', type: 'PG', address: 'PG Rd', pg_for: 'Ladies' })).body;
+  const other = (await call('POST', '/api/properties', { name: 'Other', type: 'Independent House', address: 'X' })).body;
+  const room = (await call('POST', '/api/rooms', { property_id: pg.id, room_number: '101', sharing: 'Triple', total_beds: 3, rent_per_bed: 8000 })).body;
+  assert.equal(room._label, 'Room 101 · Test PG');
+  assert.equal(room.bed_count, 3, 'beds created automatically');
+
+  let beds = (await call('GET', `/api/beds?room_id=${room.id}&sort=bed_label&dir=asc`)).body;
+  assert.deepEqual(beds.map((b) => [b.bed_label, b.monthly_rent, b.occupant]), [['Bed 1', 8000, null], ['Bed 2', 8000, null], ['Bed 3', 8000, null]]);
+
+  // Raising the bed count adds beds; it never removes them.
+  await call('PATCH', `/api/rooms/${room.id}`, { total_beds: 4 });
+  assert.equal((await call('GET', `/api/rooms/${room.id}`)).body.bed_count, 4);
+
+  // Picking a bed fills in the room and property.
+  const t1 = (await call('POST', '/api/tenants', { full_name: 'Priya', bed_id: beds[0].id })).body;
+  assert.equal(t1.room_id, room.id);
+  assert.equal(t1.property_id, pg.id);
+  assert.equal(t1.bed_id_label, 'Bed 1 · Room 101 · Test PG');
+
+  // A bed can't be given to two active tenants, or to a room/property it isn't in.
+  const dup = await call('POST', '/api/tenants', { full_name: 'Meera', bed_id: beds[0].id });
+  assert.equal(dup.status, 400);
+  assert.match(dup.body.details.bed_id, /already occupied by Priya/);
+  const wrong = await call('POST', '/api/tenants', { full_name: 'Meera', property_id: other.id, room_id: room.id });
+  assert.match(wrong.body.details.room_id, /not in the selected property/);
+  assert.equal((await call('POST', '/api/tenants', { full_name: 'Former', bed_id: beds[0].id, status: 'Former' })).status, 201);
+
+  // Agreement rent defaults to the bed rent; overlapping agreements on a bed are rejected.
+  const t2 = (await call('POST', '/api/tenants', { full_name: 'Meera' })).body;
+  const agr = await call('POST', '/api/agreements', { tenant_id: t2.id, bed_id: beds[1].id, start_date: '2026-10-01', end_date: '2027-09-30', rent_due_day: 5 });
+  assert.equal(agr.status, 201);
+  assert.equal(agr.body.monthly_rent, 8000);
+  assert.equal(agr.body.property_id, pg.id);
+  const t2After = (await call('GET', `/api/tenants/${t2.id}`)).body;
+  assert.equal(t2After.bed_id, beds[1].id, 'tenant moved onto the agreement bed');
+  const overlap = await call('POST', '/api/agreements', { tenant_id: t1.id, bed_id: beds[1].id, start_date: '2027-01-01', end_date: '2027-12-31', monthly_rent: 8000, rent_due_day: 5 });
+  assert.equal(overlap.status, 400);
+  assert.match(overlap.body.details.bed_id, /active agreement with Meera/);
+
+  const rem = (await call('GET', '/api/reminders?today=2026-10-06&days=0')).body;
+  const r = rem.rent.find((x) => x.agreement_id === agr.body.id);
+  assert.equal(r.property_name, 'Test PG, Room 101, Bed 2');
+  assert.match(r.message, /Test PG, Room 101, Bed 2/);
+
+  beds = (await call('GET', `/api/beds?room_id=${room.id}`)).body;
+  assert.equal(beds.filter((b) => b.occupant).length, 2);
+  const prop = (await call('GET', `/api/properties/${pg.id}`)).body;
+  assert.deepEqual([prop.room_count, prop.bed_count, prop.occupied_beds], [1, 4, 2]);
+  const dash = (await call('GET', '/api/dashboard')).body;
+  assert.ok(dash.beds.total >= 4 && dash.beds.occupied >= 2);
+
+  const opts = (await call('GET', '/api/beds/options')).body;
+  assert.equal(opts.find((o) => o.id === beds.find((b) => b.occupant === 'Priya').id).parent, room.id);
+
+  // A room whose bed has an agreement can't be deleted.
+  assert.equal((await call('DELETE', `/api/rooms/${room.id}`)).status, 409);
+});

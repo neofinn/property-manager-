@@ -1,6 +1,7 @@
 'use strict';
 
 const { resources } = require('./schema');
+const { localToday } = require('./reminders');
 
 class HttpError extends Error {
   constructor(status, message, details) {
@@ -15,10 +16,50 @@ const LABEL_SQL = {
   properties: (col) => `(SELECT name FROM properties WHERE id = ${col})`,
   tenants: (col) => `(SELECT full_name FROM tenants WHERE id = ${col})`,
   contacts: (col) => `(SELECT name FROM contacts WHERE id = ${col})`,
+  rooms: (col) =>
+    `(SELECT 'Room ' || r.room_number || ' · ' || p.name FROM rooms r ` +
+    `JOIN properties p ON p.id = r.property_id WHERE r.id = ${col})`,
+  beds: (col) =>
+    `(SELECT b.bed_label || ' · Room ' || r.room_number || ' · ' || p.name FROM beds b ` +
+    `JOIN rooms r ON r.id = b.room_id JOIN properties p ON p.id = r.property_id WHERE b.id = ${col})`,
   agreements: (col) =>
     `(SELECT tn.full_name || ' @ ' || p.name FROM agreements a ` +
     `JOIN tenants tn ON tn.id = a.tenant_id JOIN properties p ON p.id = a.property_id ` +
     `WHERE a.id = ${col})`,
+};
+
+// A bed (or a room let out as a whole) is occupied by an active tenant.
+const OCCUPANT_SQL = (bedCol) =>
+  `(SELECT full_name FROM tenants WHERE bed_id = ${bedCol} AND status = 'Active' ORDER BY id LIMIT 1)`;
+const OCCUPIED_BEDS_SQL = (where) =>
+  `(SELECT COUNT(*) FROM beds b WHERE ${where} AND EXISTS ` +
+  `(SELECT 1 FROM tenants x WHERE x.bed_id = b.id AND x.status = 'Active'))`;
+
+// Read-only columns computed for list and detail views.
+const COMPUTED_SQL = {
+  properties: {
+    room_count: '(SELECT COUNT(*) FROM rooms WHERE property_id = t.id)',
+    bed_count: '(SELECT COUNT(*) FROM beds b JOIN rooms r ON r.id = b.room_id WHERE r.property_id = t.id)',
+    occupied_beds: OCCUPIED_BEDS_SQL('b.room_id IN (SELECT id FROM rooms WHERE property_id = t.id)'),
+  },
+  rooms: {
+    bed_count: '(SELECT COUNT(*) FROM beds WHERE room_id = t.id)',
+    occupied_beds: OCCUPIED_BEDS_SQL('b.room_id = t.id'),
+    tenant_count: "(SELECT COUNT(*) FROM tenants WHERE room_id = t.id AND status = 'Active')",
+  },
+  beds: {
+    occupant: OCCUPANT_SQL('t.id'),
+    occupant_id: "(SELECT id FROM tenants WHERE bed_id = t.id AND status = 'Active' ORDER BY id LIMIT 1)",
+  },
+};
+
+// Extra columns sent with dropdown options. `parent` lets the form show only
+// the rooms of the chosen property and the beds of the chosen room.
+const OPTION_SQL = {
+  properties: 't.type AS type',
+  rooms: "t.property_id AS parent, 'Room ' || t.room_number AS short_label, t.rent_per_bed, t.rent_per_room",
+  beds: `t.room_id AS parent, t.bed_label AS short_label, t.monthly_rent, t.status, ${OCCUPANT_SQL('t.id')} AS occupant, ` +
+    '(SELECT rent_per_bed FROM rooms WHERE id = t.room_id) AS room_rent_per_bed',
 };
 
 const TEXT_TYPES = new Set(['text', 'textarea', 'email', 'phone', 'select']);
@@ -125,16 +166,123 @@ class Store {
       }
       if (value === undefined && !existing && field.default !== undefined) value = field.default;
       if (value !== undefined) values[field.name] = value;
+    }
 
-      const finalValue = value !== undefined ? value : existing ? existing[field.name] : undefined;
-      if (field.required && (finalValue === undefined || finalValue === null)) {
-        errors[field.name] = `${field.label} is required`;
-      }
+    if (!Object.keys(errors).length) Object.assign(errors, this.linkRoomAndBed(resourceName, input, values, existing));
+
+    for (const field of def.fields) {
+      if (!field.required || errors[field.name]) continue;
+      const finalValue = values[field.name] !== undefined ? values[field.name] : existing ? existing[field.name] : undefined;
+      if (finalValue === undefined || finalValue === null) errors[field.name] = `${field.label} is required`;
     }
 
     Object.assign(errors, crossFieldErrors(resourceName, { ...existing, ...values }));
+    if (!Object.keys(errors).length) Object.assign(errors, this.occupancyErrors(resourceName, { ...existing, ...values }, existing));
     if (Object.keys(errors).length) throw new HttpError(400, 'Validation failed', errors);
     return values;
+  }
+
+  // Tenants and agreements can point at a room and bed. Fill in the room and
+  // property from the chosen bed (and the property from the room), and reject
+  // combinations that don't belong together.
+  linkRoomAndBed(resourceName, input, values, existing) {
+    if (resourceName !== 'tenants' && resourceName !== 'agreements') return {};
+    const errors = {};
+    const current = (name) => (values[name] !== undefined ? values[name] : existing ? existing[name] : null);
+    const explicit = (name) => input[name] !== undefined && input[name] !== null && input[name] !== '';
+
+    const bedId = current('bed_id');
+    let bed = null;
+    if (bedId) {
+      bed = this.db.prepare('SELECT * FROM beds WHERE id = ?').get(bedId);
+      if (!bed) return { bed_id: 'Bed does not exist' };
+      if (current('room_id') !== bed.room_id) {
+        if (explicit('room_id')) errors.bed_id = 'Bed is not in the selected room';
+        else values.room_id = bed.room_id;
+      }
+    }
+
+    const roomId = current('room_id');
+    let room = null;
+    if (roomId) {
+      room = this.db.prepare('SELECT * FROM rooms WHERE id = ?').get(roomId);
+      if (!room) return { room_id: 'Room does not exist' };
+      if (current('property_id') !== room.property_id) {
+        if (explicit('property_id')) errors.room_id = 'Room is not in the selected property';
+        else values.property_id = room.property_id;
+      }
+    }
+
+    // Default the agreement rent from the bed or room.
+    if (resourceName === 'agreements' && current('monthly_rent') === null && !explicit('monthly_rent')) {
+      const rent = bed ? bed.monthly_rent ?? room?.rent_per_bed : room ? room.rent_per_room ?? room.rent_per_bed : null;
+      if (rent !== null && rent !== undefined) values.monthly_rent = rent;
+    }
+    return errors;
+  }
+
+  // A bed can have only one active tenant and one active agreement at a time.
+  occupancyErrors(resourceName, row, existing) {
+    if (!row.bed_id || row.status !== 'Active') return {};
+    const selfId = existing ? existing.id : -1;
+    if (resourceName === 'tenants') {
+      const other = this.db
+        .prepare("SELECT full_name FROM tenants WHERE bed_id = ? AND status = 'Active' AND id != ?")
+        .get(row.bed_id, selfId);
+      if (other) return { bed_id: `Bed is already occupied by ${other.full_name}` };
+    }
+    if (resourceName === 'agreements' && row.start_date && row.end_date) {
+      const other = this.db
+        .prepare(
+          `SELECT a.start_date, a.end_date, tn.full_name FROM agreements a JOIN tenants tn ON tn.id = a.tenant_id
+           WHERE a.bed_id = ? AND a.status = 'Active' AND a.id != ? AND a.start_date <= ? AND a.end_date >= ?`,
+        )
+        .get(row.bed_id, selfId, row.end_date, row.start_date);
+      if (other) {
+        return { bed_id: `Bed already has an active agreement with ${other.full_name} (${other.start_date} to ${other.end_date})` };
+      }
+    }
+    return {};
+  }
+
+  // Side effects after a successful insert or update, run in the same transaction.
+  afterSave(resourceName, row) {
+    if (resourceName === 'rooms') {
+      // Create beds up to the room's bed count (never removes any).
+      const have = this.db.prepare('SELECT COUNT(*) AS n FROM beds WHERE room_id = ?').get(row.id).n;
+      const names = new Set(this.db.prepare('SELECT bed_label FROM beds WHERE room_id = ?').all(row.id).map((b) => b.bed_label));
+      const insert = this.db.prepare('INSERT INTO beds (room_id, bed_label, monthly_rent, status) VALUES (?, ?, ?, ?)');
+      for (let i = 1, added = have; added < (row.total_beds || 0); i++) {
+        if (names.has(`Bed ${i}`)) continue;
+        insert.run(row.id, `Bed ${i}`, row.rent_per_bed ?? null, 'Available');
+        added++;
+      }
+    }
+    if (resourceName === 'agreements' && row.status === 'Active' && (row.room_id || row.bed_id)) {
+      // Keep the tenant's current room and bed in step with their active agreement.
+      const tenant = this.db.prepare('SELECT * FROM tenants WHERE id = ?').get(row.tenant_id);
+      const today = localToday();
+      const current = row.start_date <= today && row.end_date >= today;
+      if (tenant && (current || (!tenant.bed_id && !tenant.room_id))) {
+        const errors = this.occupancyErrors('tenants', { ...tenant, bed_id: row.bed_id }, tenant);
+        if (Object.keys(errors).length) throw new HttpError(400, 'Validation failed', errors);
+        this.db
+          .prepare("UPDATE tenants SET property_id = ?, room_id = ?, bed_id = ?, updated_at = datetime('now') WHERE id = ?")
+          .run(row.property_id, row.room_id, row.bed_id, tenant.id);
+      }
+    }
+  }
+
+  transaction(fn) {
+    this.db.exec('BEGIN');
+    try {
+      const result = fn();
+      this.db.exec('COMMIT');
+      return result;
+    } catch (err) {
+      this.db.exec('ROLLBACK');
+      throw err;
+    }
   }
 
   selectSql(resourceName) {
@@ -142,6 +290,7 @@ class Store {
     const extra = def.fields
       .filter((f) => f.type === 'ref' && LABEL_SQL[f.ref])
       .map((f) => `${LABEL_SQL[f.ref](`t.${f.name}`)} AS ${f.name}_label`);
+    for (const [name, sql] of Object.entries(COMPUTED_SQL[resourceName] || {})) extra.push(`${sql} AS ${name}`);
     const label = LABEL_SQL[resourceName] ? `, ${LABEL_SQL[resourceName]('t.id')} AS _label` : '';
     return `SELECT t.*${extra.length ? ', ' + extra.join(', ') : ''}${label} FROM ${resourceName} t`;
   }
@@ -189,7 +338,10 @@ class Store {
   options(resourceName) {
     getResource(resourceName);
     const label = LABEL_SQL[resourceName] ? LABEL_SQL[resourceName]('t.id') : `'#' || t.id`;
-    return this.db.prepare(`SELECT t.id, ${label} AS label FROM ${resourceName} t ORDER BY label COLLATE NOCASE`).all();
+    const extra = OPTION_SQL[resourceName] ? `, ${OPTION_SQL[resourceName]}` : '';
+    return this.db
+      .prepare(`SELECT t.id, ${label} AS label${extra} FROM ${resourceName} t ORDER BY label COLLATE NOCASE`)
+      .all();
   }
 
   get(resourceName, id) {
@@ -204,22 +356,30 @@ class Store {
     const sql = cols.length
       ? `INSERT INTO ${resourceName} (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`
       : `INSERT INTO ${resourceName} DEFAULT VALUES`;
-    const result = this.run(sql, cols.map((c) => values[c]));
-    return this.get(resourceName, result.lastInsertRowid);
+    return this.transaction(() => {
+      const result = this.run(sql, cols.map((c) => values[c]));
+      const row = this.get(resourceName, result.lastInsertRowid);
+      this.afterSave(resourceName, row);
+      return this.get(resourceName, row.id);
+    });
   }
 
   update(resourceName, id, input, extraColumns = {}) {
     const existing = this.get(resourceName, id);
     const values = { ...this.validate(resourceName, input, existing), ...extraColumns };
     const cols = Object.keys(values);
-    if (cols.length) {
-      const sets = cols.map((c) => `${c} = ?`).join(', ');
-      this.run(`UPDATE ${resourceName} SET ${sets}, updated_at = datetime('now') WHERE id = ?`, [
-        ...cols.map((c) => values[c]),
-        existing.id,
-      ]);
-    }
-    return this.get(resourceName, id);
+    return this.transaction(() => {
+      if (cols.length) {
+        const sets = cols.map((c) => `${c} = ?`).join(', ');
+        this.run(`UPDATE ${resourceName} SET ${sets}, updated_at = datetime('now') WHERE id = ?`, [
+          ...cols.map((c) => values[c]),
+          existing.id,
+        ]);
+      }
+      const row = this.get(resourceName, id);
+      this.afterSave(resourceName, row);
+      return this.get(resourceName, id);
+    });
   }
 
   remove(resourceName, id) {

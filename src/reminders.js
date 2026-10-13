@@ -46,6 +46,11 @@ function makeMoney(currency) {
   return (n) => fmt.format(n);
 }
 
+// "Sunrise PG, Room 101, Bed 2"
+function placeName(row) {
+  return [row.property_name, row.room_number && `Room ${row.room_number}`, row.bed_label].filter(Boolean).join(', ');
+}
+
 function digitsOnly(phone) {
   return phone ? String(phone).replace(/[^\d]/g, '') : '';
 }
@@ -74,7 +79,9 @@ function rentReminders(db, today, horizon, money) {
   const agreements = db
     .prepare(
       `SELECT a.*, tn.full_name AS tenant_name, tn.phone AS tenant_phone, tn.email AS tenant_email,
-              p.name AS property_name
+              p.name AS property_name,
+              (SELECT room_number FROM rooms WHERE id = a.room_id) AS room_number,
+              (SELECT bed_label FROM beds WHERE id = a.bed_id) AS bed_label
        FROM agreements a
        JOIN tenants tn ON tn.id = a.tenant_id
        JOIN properties p ON p.id = a.property_id
@@ -88,6 +95,7 @@ function rentReminders(db, today, horizon, money) {
   const items = [];
 
   for (const a of agreements) {
+    a.property_name = placeName(a);
     const paid = new Map(paidStmt.all(a.id).map((r) => [r.period, r.paid]));
     let period = a.start_date.slice(0, 7);
     const earliest = addMonths(today.slice(0, 7), -(MAX_RENT_LOOKBACK_MONTHS - 1));
@@ -168,12 +176,15 @@ function agreementReminders(db, today, money, windowDays = 60) {
   return db
     .prepare(
       `SELECT a.*, tn.full_name AS tenant_name, tn.phone AS tenant_phone, tn.email AS tenant_email,
-              p.name AS property_name
+              p.name AS property_name,
+              (SELECT room_number FROM rooms WHERE id = a.room_id) AS room_number,
+              (SELECT bed_label FROM beds WHERE id = a.bed_id) AS bed_label
        FROM agreements a JOIN tenants tn ON tn.id = a.tenant_id JOIN properties p ON p.id = a.property_id
        WHERE a.status = 'Active' AND a.end_date <= ? ORDER BY a.end_date`,
     )
     .all(addDays(today, windowDays))
     .map((a) => {
+      a.property_name = placeName(a);
       const daysLeft = daysBetween(today, a.end_date);
       const message =
         daysLeft < 0
@@ -310,6 +321,13 @@ function computeDashboard(db, { today = localToday(), horizon = 7, currency = 'I
     .prepare('SELECT COALESCE(SUM(amount), 0) AS s FROM rent_payments WHERE period = ?')
     .get(period).s;
   const reminders = computeReminders(db, { today, horizon, currency });
+  const beds = db
+    .prepare(
+      `SELECT COUNT(*) AS total,
+              SUM(EXISTS (SELECT 1 FROM tenants x WHERE x.bed_id = b.id AND x.status = 'Active')) AS occupied
+       FROM beds b`,
+    )
+    .get();
   const overdueRent = reminders.rent.filter((r) => r.state === 'overdue');
 
   return {
@@ -324,6 +342,7 @@ function computeDashboard(db, { today = localToday(), horizon = 7, currency = 'I
       unpaid_bills: count('bills', "WHERE status = 'Unpaid'"),
     },
     occupancy: { occupied, total: count('properties') },
+    beds: { total: beds.total, occupied: beds.occupied || 0, rooms: count('rooms') },
     rent: {
       expected_this_month: expected,
       collected_this_month: collected,

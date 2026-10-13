@@ -8,6 +8,9 @@
     { id: 'dashboard', label: 'Dashboard', icon: '◧' },
     { id: 'reminders', label: 'Reminders', icon: '⏰' },
     { id: 'properties', icon: '⌂' },
+    { id: 'bedboard', label: 'Bed board (PG)', icon: '▦' },
+    { id: 'rooms', icon: '⊞' },
+    { id: 'beds', icon: '⌸' },
     { id: 'tenants', icon: '☺' },
     { id: 'agreements', icon: '✎' },
     { id: 'rent_payments', icon: '₹' },
@@ -16,6 +19,26 @@
     { id: 'contacts', icon: '☎' },
     { id: 'schedules', icon: '◷' },
   ];
+
+  const SHARED_TYPES = ['PG', 'BnB'];
+
+  // Read-only columns the server computes, shown after the regular list columns.
+  const COMPUTED_COLUMNS = {
+    properties: [{
+      label: 'Rooms / beds',
+      render: (r) => (r.room_count ? `${r.room_count} room${r.room_count === 1 ? '' : 's'}${r.bed_count ? ` · ${occupancyText(r.occupied_beds, r.bed_count)}` : ''}` : '<span class="muted">—</span>'),
+    }],
+    rooms: [{ label: 'Occupancy', render: (r) => (r.bed_count ? occupancyText(r.occupied_beds, r.bed_count) : `${r.tenant_count} tenant${r.tenant_count === 1 ? '' : 's'}`) }],
+    beds: [{
+      label: 'Occupant',
+      render: (r) => (r.occupant ? `<a href="#/tenants?id=${r.occupant_id}">${esc(r.occupant)}</a>` : '<span class="pill good">Vacant</span>'),
+    }],
+  };
+
+  function occupancyText(occupied, total) {
+    const free = total - occupied;
+    return `${occupied}/${total} beds filled${free ? ` · <strong>${free} free</strong>` : ''}`;
+  }
 
   // ---------- helpers ----------
 
@@ -176,6 +199,7 @@
     try {
       if (view === 'dashboard') await renderDashboard(main);
       else if (view === 'reminders') await renderReminders(main);
+      else if (view === 'bedboard') await renderBedBoard(main, query);
       else if (state.config.resources[view]) await renderList(main, view, query);
       else main.innerHTML = '<p>Page not found.</p>';
     } catch (err) {
@@ -197,6 +221,7 @@
       <div class="page-head"><h2>Dashboard</h2><span class="muted">${esc(fmtDate(d.today))}</span></div>
       <section class="stats">
         ${stat('Properties', d.counts.properties, `${d.occupancy.occupied} occupied · ${d.occupancy.total - d.occupancy.occupied} vacant`, '#/properties')}
+        ${d.beds.total ? stat('PG beds', `${d.beds.occupied}/${d.beds.total}`, `${d.beds.total - d.beds.occupied} vacant · ${d.beds.rooms} rooms`, '#/bedboard') : ''}
         ${stat('Active tenants', d.counts.tenants, `${d.counts.agreements} active agreements`, '#/tenants')}
         ${stat(`Rent collected (${fmtMonth(d.period)})`, money(r.collected_this_month), `of ${money(r.expected_this_month)} expected · ${pct}%`, '#/rent_payments')}
         ${stat('Overdue rent', money(r.overdue_total), `${r.overdue_count} payment${r.overdue_count === 1 ? '' : 's'} pending`, '#/reminders')}
@@ -313,11 +338,63 @@
     return `<div class="${full ? 'rem-grid full' : 'rem-grid'}">${rent}${bills}${schedules}${agreements}${docs}</div>`;
   }
 
+  // ---------- PG bed board ----------
+
+  async function renderBedBoard(main, query) {
+    const [properties, rooms, beds] = await Promise.all([api('properties?sort=name&dir=asc'), api('rooms?sort=room_number&dir=asc&limit=5000'), api('beds?sort=bed_label&dir=asc&limit=5000')]);
+    const shared = properties.filter((p) => SHARED_TYPES.includes(p.type) || p.room_count);
+    const shown = query.property_id ? shared.filter((p) => String(p.id) === query.property_id) : shared;
+
+    const bedChip = (b, room, property) => {
+      if (b.occupant) return `<a class="bed occupied" href="#/tenants?id=${b.occupant_id}" title="${esc(b.bed_label)}: ${esc(b.occupant)}"><span class="bed-name">${esc(b.bed_label)}</span><span>${esc(b.occupant)}</span></a>`;
+      if (b.status !== 'Available') return `<a class="bed blocked" href="#/beds?id=${b.id}"><span class="bed-name">${esc(b.bed_label)}</span><span>${esc(b.status)}</span></a>`;
+      return `<button class="bed vacant" data-action="assign-bed" data-bed="${b.id}" title="Add a tenant to this bed"><span class="bed-name">${esc(b.bed_label)}</span><span>Vacant${b.monthly_rent ? ` · ${esc(money(b.monthly_rent))}` : ''}</span></button>`;
+    };
+
+    main.innerHTML = `
+      <div class="page-head">
+        <h2>Bed board</h2>
+        <div class="head-actions">
+          <select id="board-property" aria-label="Property">
+            <option value="">All PG / BnB properties</option>
+            ${shared.map((p) => `<option value="${p.id}" ${String(p.id) === query.property_id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      <p class="legend"><span class="bed-dot vacant"></span> Vacant <span class="bed-dot occupied"></span> Occupied <span class="bed-dot blocked"></span> Reserved / maintenance</p>
+      ${shown.length ? shown.map((p) => {
+        const pRooms = rooms.filter((r) => r.property_id === p.id);
+        return `
+          <section class="card board">
+            <div class="page-head">
+              <h3>${esc(p.name)} <span class="pill">${esc(p.type || '')}</span>${p.pg_for ? ` <span class="pill">${esc(p.pg_for)}</span>` : ''}</h3>
+              <div class="head-actions">
+                <span class="muted">${p.bed_count ? occupancyText(p.occupied_beds, p.bed_count) : 'No beds yet'}</span>
+                <a class="btn small primary" href="#/rooms?property_id=${p.id}">Manage rooms</a>
+              </div>
+            </div>
+            ${pRooms.length ? `<div class="rooms">${pRooms.map((r) => {
+              const rBeds = beds.filter((b) => b.room_id === r.id);
+              const tags = [r.sharing && (['Single', 'Double', 'Triple', 'Four', 'Five+'].includes(r.sharing) ? `${r.sharing} sharing` : r.sharing), r.ac ? 'AC' : '', r.attached_bath ? 'Attached bath' : '', r.floor && `Floor ${r.floor}`].filter(Boolean);
+              return `
+                <div class="room ${r.status !== 'Available' ? 'room-off' : ''}">
+                  <div class="room-head"><a href="#/rooms?id=${r.id}"><strong>Room ${esc(r.room_number)}</strong></a> <span class="muted small">${esc(tags.join(' · '))}</span></div>
+                  ${r.status !== 'Available' ? `<span class="pill bad">${esc(r.status)}</span>` : ''}
+                  <div class="beds">${rBeds.length ? rBeds.map((b) => bedChip(b, r, p)).join('') : `<span class="muted small">No beds · ${r.tenant_count} tenant${r.tenant_count === 1 ? '' : 's'}</span>`}</div>
+                </div>`;
+            }).join('')}</div>` : `<p class="muted">No rooms added yet. <a href="#/rooms?property_id=${p.id}">Add rooms</a> to track beds.</p>`}
+          </section>`;
+      }).join('') : `<div class="empty card"><p>No PG or BnB properties yet. Add a property with type <strong>PG</strong> or <strong>BnB</strong>, then add its rooms.</p><a class="btn primary" href="#/properties">Go to properties</a></div>`}
+    `;
+    $('#board-property').addEventListener('change', (e) => (location.hash = `#/bedboard${e.target.value ? `?property_id=${e.target.value}` : ''}`));
+  }
+
   // ---------- resource lists ----------
 
   async function renderList(main, name, query) {
     const def = resource(name);
     const listFields = def.fields.filter((f) => f.list);
+    const computed = COMPUTED_COLUMNS[name] || [];
     const filterFields = def.fields.filter((f) => f.type === 'select' && f.options.length <= 12);
     const params = new URLSearchParams();
     for (const [k, v] of Object.entries(query)) if (v !== '' && k !== 'id') params.set(k, v);
@@ -343,11 +420,12 @@
       ${rows.length ? `
       <div class="table-wrap">
         <table>
-          <thead><tr>${listFields.map((f) => `<th>${esc(f.label)}</th>`).join('')}<th class="actions-col"><span class="sr-only">Actions</span></th></tr></thead>
+          <thead><tr>${listFields.map((f) => `<th>${esc(f.label)}</th>`).join('')}${computed.map((c) => `<th>${esc(c.label)}</th>`).join('')}<th class="actions-col"><span class="sr-only">Actions</span></th></tr></thead>
           <tbody>
             ${rows.map((row) => `
               <tr data-id="${row.id}">
                 ${listFields.map((f) => `<td data-label="${esc(f.label)}">${formatCell(f, row)}</td>`).join('')}
+                ${computed.map((c) => `<td data-label="${esc(c.label)}">${c.render(row)}</td>`).join('')}
                 <td class="actions-col">${rowActions(name, row)}</td>
               </tr>`).join('')}
           </tbody>
@@ -386,6 +464,14 @@
 
   function rowActions(name, row) {
     const extra = [];
+    if (name === 'properties' && (SHARED_TYPES.includes(row.type) || row.room_count)) {
+      extra.push(`<a class="btn small" href="#/bedboard?property_id=${row.id}">Bed board</a>`);
+      extra.push(`<a class="btn small" href="#/rooms?property_id=${row.id}">Rooms</a>`);
+    }
+    if (name === 'rooms') extra.push(`<a class="btn small" href="#/beds?room_id=${row.id}">Beds</a>`);
+    if (name === 'beds' && !row.occupant && row.status === 'Available') {
+      extra.push(`<button class="btn small" data-action="assign-bed" data-bed="${row.id}">+ Tenant</button>`);
+    }
     if (name === 'properties') {
       extra.push(`<a class="btn small" href="#/tenants?property_id=${row.id}">Tenants</a>`);
       extra.push(`<a class="btn small" href="#/bills?property_id=${row.id}">Bills</a>`);
@@ -421,7 +507,8 @@
         return `<div class="field">${label}<select id="${id}" name="${field.name}"${req}><option value="">—</option>${field.options.map((o) => `<option ${o === v ? 'selected' : ''}>${esc(o)}</option>`).join('')}</select></div>`;
       case 'ref': {
         const opts = await options(field.ref);
-        return `<div class="field">${label}<select id="${id}" name="${field.name}"${req}><option value="">—</option>${opts.map((o) => `<option value="${o.id}" ${String(o.id) === String(v) ? 'selected' : ''}>${esc(o.label)}</option>`).join('')}</select></div>`;
+        const dep = field.dependsOn ? ` data-depends-on="${field.dependsOn}" data-ref="${field.ref}" data-value="${esc(v)}"` : '';
+        return `<div class="field">${label}<select id="${id}" name="${field.name}"${dep}${req}><option value="">—</option>${opts.map((o) => `<option value="${o.id}" ${String(o.id) === String(v) ? 'selected' : ''}>${esc(o.label)}</option>`).join('')}</select></div>`;
       }
       case 'bool':
         return `<div class="field check"><label><input type="checkbox" id="${id}" name="${field.name}" ${v ? 'checked' : ''}> ${esc(field.label)}</label></div>`;
@@ -436,7 +523,8 @@
         if (field.min !== undefined) attrs.push(`min="${field.min}"`);
         if (field.max !== undefined) attrs.push(`max="${field.max}"`);
         if (field.placeholder) attrs.push(`placeholder="${esc(field.placeholder)}"`);
-        return `<div class="field">${label}<input id="${id}" name="${field.name}" type="${types[field.type] || 'text'}" value="${esc(v)}" ${attrs.join(' ')}${req}></div>`;
+        const hint = field.hint ? `<span class="hint">${esc(field.hint)}</span>` : '';
+        return `<div class="field">${label}<input id="${id}" name="${field.name}" type="${types[field.type] || 'text'}" value="${esc(v)}" ${attrs.join(' ')}${req}>${hint}</div>`;
       }
     }
   }
@@ -453,10 +541,56 @@
       inputs.push(await fieldInput(f, v));
     }
     $('#form-fields').innerHTML = inputs.join('');
+    wireDependentSelects(name);
     const dialog = $('#dialog');
     if (!dialog.open) dialog.showModal();
     const first = $('#form-fields input:not([type=checkbox]), #form-fields select, #form-fields textarea');
     if (first) first.focus();
+  }
+
+  // Room and bed dropdowns only list rooms of the chosen property and beds of
+  // the chosen room, and are hidden when there is nothing to choose.
+  function wireDependentSelects(resourceName) {
+    const form = $('#record-form');
+    const children = [...form.querySelectorAll('select[data-depends-on]')];
+    if (!children.length) return;
+
+    const refresh = () => {
+      for (const select of children) {
+        const parentValue = form.elements[select.dataset.dependsOn]?.value || '';
+        const keep = select.value || select.dataset.value || '';
+        const opts = (state.optionsCache[select.dataset.ref] || []).filter((o) => parentValue && String(o.parent) === parentValue);
+        select.innerHTML = '<option value="">—</option>' + opts.map((o) => {
+          const occupied = o.occupant ? ` – ${o.occupant}` : select.dataset.ref === 'beds' ? (o.status === 'Available' ? ' – vacant' : ` – ${o.status}`) : '';
+          return `<option value="${o.id}" ${String(o.id) === keep ? 'selected' : ''}>${esc((o.short_label || o.label) + occupied)}</option>`;
+        }).join('');
+        select.dataset.value = '';
+        select.closest('.field').hidden = opts.length === 0;
+      }
+    };
+
+    for (const select of children) {
+      const parent = form.elements[select.dataset.dependsOn];
+      parent?.addEventListener('change', () => {
+        for (const c of children) c.dataset.value = '';
+        refresh();
+      });
+    }
+
+    if (resourceName === 'agreements') {
+      // Suggest the bed or room rent when the rent box is still empty.
+      const rent = form.elements.monthly_rent;
+      const suggest = () => {
+        if (!rent || rent.value) return;
+        const bed = (state.optionsCache.beds || []).find((o) => String(o.id) === form.elements.bed_id.value);
+        const room = (state.optionsCache.rooms || []).find((o) => String(o.id) === form.elements.room_id.value);
+        const value = bed ? bed.monthly_rent ?? bed.room_rent_per_bed : room ? room.rent_per_room ?? room.rent_per_bed : null;
+        if (value !== null && value !== undefined) rent.value = value;
+      };
+      form.elements.bed_id?.addEventListener('change', suggest);
+      form.elements.room_id?.addEventListener('change', suggest);
+    }
+    refresh();
   }
 
   function readFile(file) {
@@ -490,7 +624,7 @@
     btn.disabled = true;
     try {
       await api(id ? `${name}/${id}` : name, { method: id ? 'PATCH' : 'POST', body });
-      delete state.optionsCache[name];
+      state.optionsCache = {};
       closeDialog();
       toast(`${def.singular} saved`);
       route();
@@ -548,13 +682,25 @@
     const { action, id } = el.dataset;
     const name = state.view;
 
-    if (action === 'new') return openForm(name);
+    if (action === 'new') {
+      // Pre-fill from the list's filter, e.g. adding a room from a property's room list.
+      const preset = {};
+      for (const f of resource(name).fields) if (state.query[f.name] && f.type !== 'select') preset[f.name] = state.query[f.name];
+      if (el.dataset.preset) Object.assign(preset, JSON.parse(el.dataset.preset));
+      return openForm(name, null, preset);
+    }
+    if (action === 'assign-bed') {
+      const beds = await options('beds', true);
+      const bed = beds.find((b) => String(b.id) === el.dataset.bed);
+      const room = bed && (await options('rooms', true)).find((r) => r.id === bed.parent);
+      return openForm('tenants', null, { property_id: room?.parent, room_id: bed?.parent, bed_id: el.dataset.bed, status: 'Active', move_in: today() });
+    }
     if (action === 'edit') return openForm(name, await api(`${name}/${id}`));
     if (action === 'delete') {
       if (!confirm(`Delete this ${resource(name).singular.toLowerCase()}? This cannot be undone.`)) return;
       try {
         await api(`${name}/${id}`, { method: 'DELETE' });
-        delete state.optionsCache[name];
+        state.optionsCache = {};
         toast('Deleted');
         route();
       } catch (err) {

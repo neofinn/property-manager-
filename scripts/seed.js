@@ -43,6 +43,17 @@ for (let period = a2.start_date.slice(0, 7); period < thisMonth; period = addMon
 }
 store.create('rent_payments', { agreement_id: a2.id, period: thisMonth, amount: 30000, paid_on: today, method: 'Bank Transfer', notes: 'Half paid, rest promised next week' });
 
+// A PG let out bed-wise and a BnB let out room-wise.
+const pg = store.create('properties', { name: 'Sunrise PG', type: 'PG', pg_for: 'Gents', food_included: true, address: '22 4th Cross, Koramangala', city: 'Bengaluru', units: 3, status: 'Occupied', owner_contact_id: owner.id });
+const r101 = store.create('rooms', { property_id: pg.id, room_number: '101', floor: '1', sharing: 'Double', total_beds: 2, rent_per_bed: 9000, ac: true, attached_bath: true });
+store.create('rooms', { property_id: pg.id, room_number: '102', floor: '1', sharing: 'Triple', total_beds: 3, rent_per_bed: 7000, attached_bath: true });
+store.create('rooms', { property_id: pg.id, room_number: '201', floor: '2', sharing: 'Single', total_beds: 1, rent_per_bed: 13000, ac: true });
+const [bed1] = store.list('beds', { room_id: r101.id, sort: 'bed_label', dir: 'asc' });
+const t4 = store.create('tenants', { full_name: 'Rahul Verma', phone: '+91 90000 44444', bed_id: bed1.id, move_in: addDays(today, -40), id_type: 'Aadhaar', status: 'Active' });
+store.create('agreements', { tenant_id: t4.id, bed_id: bed1.id, start_date: addDays(today, -40), end_date: addDays(today, 325), security_deposit: 18000, rent_due_day: 5 });
+const bnb = store.create('properties', { name: 'Hilltop Homestay', type: 'BnB', address: '8 Coffee Estate Road', city: 'Coorg', status: 'Vacant' });
+store.create('rooms', { property_id: bnb.id, room_number: 'Garden Suite', sharing: 'Private room', total_beds: 0, rent_per_room: 3500 });
+
 store.create('bills', { property_id: p1.id, category: 'Electricity', provider: 'BESCOM', amount: 1840, bill_date: addDays(today, -12), due_date: addDays(today, 3), payer: 'Tenant' });
 store.create('bills', { property_id: p2.id, category: 'Property Tax', amount: 12500, due_date: addDays(today, -4), payer: 'Owner' });
 store.create('bills', { property_id: p1.id, category: 'Maintenance', provider: 'Society', amount: 3000, due_date: addDays(today, -20), status: 'Paid', paid_on: addDays(today, -22) });
