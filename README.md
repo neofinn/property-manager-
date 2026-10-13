@@ -76,6 +76,39 @@ stored under `/data`, so give it a **persistent volume** there. Without one,
 everything is lost when the server restarts. Serve it over **HTTPS**, which
 every host below does for you.
 
+### GitHub Codespaces (free, runs directly on GitHub)
+
+The fastest way to get a link you can share. It's free for about 60 hours a
+month on a personal GitHub account.
+
+1. On the repository page, click **Code → Codespaces → Create codespace on main**.
+2. Wait about 2 minutes. The app starts by itself, and the terminal prints its
+   link, `https://<codespace-name>-3000.app.github.dev`.
+3. Open the **Ports** tab. If port 3000 isn't marked *Public*, right-click it
+   and choose **Port visibility → Public**.
+4. Send that link to your testers.
+
+Accounts and data are saved in the codespace's `data` folder and survive the
+codespace stopping. GitHub stops an idle codespace after 30 minutes, and the
+link stops working until you start it again from **Code → Codespaces**. You
+can raise the timeout to 4 hours in GitHub **Settings → Codespaces → Default
+idle timeout**. This suits a small beta. For a link that stays up around the
+clock, use one of the hosts below.
+
+### Docker image from GitHub
+
+Every push to `main` runs the tests, then builds and publishes an image to
+GitHub Container Registry. Run it on any machine with Docker:
+
+```bash
+docker run -d -p 3000:3000 -v pm-data:/data ghcr.io/neofinn/property-manager:latest
+```
+
+Then open http://localhost:3000. If the repository is private, run
+`docker login ghcr.io` first, using your GitHub username and a token with
+`read:packages`. To reach the app from other devices, run it on a server
+or VPS and put HTTPS in front of it.
+
 ### Render (blueprint included)
 
 1. Push this repository to GitHub.
@@ -131,6 +164,8 @@ src/sample.js        Sample data
 public/              Single-page web app (vanilla JS, no build step), sign-in page, installable-app files
 scripts/             Demo account (seed) and feedback report
 Dockerfile, render.yaml  Deployment
+.devcontainer/        GitHub Codespaces setup
+.github/workflows/    Tests on every push, Docker image publishing
 test/                API tests (node:test)
 ```
 
