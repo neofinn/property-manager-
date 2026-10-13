@@ -8,7 +8,7 @@
     { id: 'dashboard', label: 'Dashboard', icon: '◧' },
     { id: 'reminders', label: 'Reminders', icon: '⏰' },
     { id: 'properties', icon: '⌂' },
-    { id: 'bedboard', label: 'Bed board (PG)', icon: '▦' },
+    { id: 'bedboard', label: 'Bed board', icon: '▦' },
     { id: 'rooms', icon: '⊞' },
     { id: 'beds', icon: '⌸' },
     { id: 'tenants', icon: '☺' },
@@ -20,7 +20,7 @@
     { id: 'schedules', icon: '◷' },
   ];
 
-  const SHARED_TYPES = ['PG', 'BnB'];
+  const SHARED_TYPES = ['PG / Hostel', 'BnB'];
 
   // Read-only columns the server computes, shown after the regular list columns.
   const COMPUTED_COLUMNS = {
@@ -221,7 +221,7 @@
       <div class="page-head"><h2>Dashboard</h2><span class="muted">${esc(fmtDate(d.today))}</span></div>
       <section class="stats">
         ${stat('Properties', d.counts.properties, `${d.occupancy.occupied} occupied · ${d.occupancy.total - d.occupancy.occupied} vacant`, '#/properties')}
-        ${d.beds.total ? stat('PG beds', `${d.beds.occupied}/${d.beds.total}`, `${d.beds.total - d.beds.occupied} vacant · ${d.beds.rooms} rooms`, '#/bedboard') : ''}
+        ${d.beds.total ? stat('PG / hostel beds', `${d.beds.occupied}/${d.beds.total}`, `${d.beds.total - d.beds.occupied} vacant · ${d.beds.rooms} rooms`, '#/bedboard') : ''}
         ${stat('Active tenants', d.counts.tenants, `${d.counts.agreements} active agreements`, '#/tenants')}
         ${stat(`Rent collected (${fmtMonth(d.period)})`, money(r.collected_this_month), `of ${money(r.expected_this_month)} expected · ${pct}%`, '#/rent_payments')}
         ${stat('Overdue rent', money(r.overdue_total), `${r.overdue_count} payment${r.overdue_count === 1 ? '' : 's'} pending`, '#/reminders')}
@@ -356,7 +356,7 @@
         <h2>Bed board</h2>
         <div class="head-actions">
           <select id="board-property" aria-label="Property">
-            <option value="">All PG / BnB properties</option>
+            <option value="">All PG / hostel / BnB properties</option>
             ${shared.map((p) => `<option value="${p.id}" ${String(p.id) === query.property_id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
           </select>
         </div>
@@ -367,12 +367,13 @@
         return `
           <section class="card board">
             <div class="page-head">
-              <h3>${esc(p.name)} <span class="pill">${esc(p.type || '')}</span>${p.pg_for ? ` <span class="pill">${esc(p.pg_for)}</span>` : ''}</h3>
+              <h3>${esc(p.name)} <span class="pill">${esc(p.type || '')}</span>${p.pg_for ? ` <span class="pill">${esc(p.pg_for)}</span>` : ''}${p.meals && p.meals !== 'No food' ? ` <span class="pill">🍽 ${esc(p.meals)}</span>` : ''}</h3>
               <div class="head-actions">
                 <span class="muted">${p.bed_count ? occupancyText(p.occupied_beds, p.bed_count) : 'No beds yet'}</span>
                 <a class="btn small primary" href="#/rooms?property_id=${p.id}">Manage rooms</a>
               </div>
             </div>
+            ${p.gate_timings || p.visiting_hours || p.warden_contact_id ? `<p class="muted small board-info">${[p.gate_timings && `🕙 ${esc(p.gate_timings)}`, p.visiting_hours && `Visitors ${esc(p.visiting_hours)}`, p.warden_contact_id && `Warden: ${esc(p.warden_contact_id_label)}`].filter(Boolean).join(' · ')}</p>` : ''}
             ${pRooms.length ? `<div class="rooms">${pRooms.map((r) => {
               const rBeds = beds.filter((b) => b.room_id === r.id);
               const tags = [r.sharing && (['Single', 'Double', 'Triple', 'Four', 'Five+'].includes(r.sharing) ? `${r.sharing} sharing` : r.sharing), r.ac ? 'AC' : '', r.attached_bath ? 'Attached bath' : '', r.floor && `Floor ${r.floor}`].filter(Boolean);
@@ -384,7 +385,7 @@
                 </div>`;
             }).join('')}</div>` : `<p class="muted">No rooms added yet. <a href="#/rooms?property_id=${p.id}">Add rooms</a> to track beds.</p>`}
           </section>`;
-      }).join('') : `<div class="empty card"><p>No PG or BnB properties yet. Add a property with type <strong>PG</strong> or <strong>BnB</strong>, then add its rooms.</p><a class="btn primary" href="#/properties">Go to properties</a></div>`}
+      }).join('') : `<div class="empty card"><p>No PG, hostel or BnB properties yet. Add a property with type <strong>PG / Hostel</strong> or <strong>BnB</strong>, then add its rooms.</p><a class="btn primary" href="#/properties">Go to properties</a></div>`}
     `;
     $('#board-property').addEventListener('change', (e) => (location.hash = `#/bedboard${e.target.value ? `?property_id=${e.target.value}` : ''}`));
   }

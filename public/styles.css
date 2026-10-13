@@ -345,3 +345,4 @@ main > .form-error { margin: 0; }
 .bed.blocked, .bed-dot.blocked { background: var(--warn-bg); border-color: var(--warn); }
 .bed.blocked { color: var(--warn); }
 .bed:hover { box-shadow: 0 0 0 2px var(--accent-soft); }
+.board-info { margin: -6px 0 12px; }

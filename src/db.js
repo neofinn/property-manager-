@@ -61,6 +61,13 @@ function open(dataDir) {
     }
   }
 
+  // Data migrations for renamed options.
+  db.exec("UPDATE properties SET type = 'PG / Hostel' WHERE type = 'PG'");
+  const cols = new Set(db.prepare('PRAGMA table_info(properties)').all().map((c) => c.name));
+  if (cols.has('food_included')) {
+    db.exec("UPDATE properties SET meals = 'All 3 meals' WHERE food_included = 1 AND meals IS NULL");
+  }
+
   db.exec(`
     CREATE TABLE IF NOT EXISTS reminder_log (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -205,7 +205,7 @@ test('basic auth when a password is configured', async () => {
 });
 
 test('PG rooms and beds: auto beds, linking, occupancy and rent', async () => {
-  const pg = (await call('POST', '/api/properties', { name: 'Test PG', type: 'PG', address: 'PG Rd', pg_for: 'Ladies' })).body;
+  const pg = (await call('POST', '/api/properties', { name: 'Test PG', type: 'PG / Hostel', address: 'PG Rd', pg_for: 'Ladies', meals: 'All 3 meals', gate_timings: 'Gate closes 10 pm' })).body;
   const other = (await call('POST', '/api/properties', { name: 'Other', type: 'Independent House', address: 'X' })).body;
   const room = (await call('POST', '/api/rooms', { property_id: pg.id, room_number: '101', sharing: 'Triple', total_beds: 3, rent_per_bed: 8000 })).body;
   assert.equal(room._label, 'Room 101 · Test PG');

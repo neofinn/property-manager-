@@ -10,7 +10,7 @@
 // picked in that other field (e.g. beds of the chosen room).
 
 // Property types that are let out room-wise / bed-wise.
-const SHARED_TYPES = ['PG', 'BnB'];
+const SHARED_TYPES = ['PG / Hostel', 'BnB'];
 
 const resources = {
   properties: {
@@ -19,12 +19,15 @@ const resources = {
     display: 'name',
     fields: [
       { name: 'name', label: 'Name', type: 'text', required: true, list: true },
-      { name: 'type', label: 'Type', type: 'select', options: ['PG', 'Independent House', 'BnB', 'Apartment', 'Villa', 'Commercial', 'Office', 'Land', 'Other'], list: true },
+      { name: 'type', label: 'Type', type: 'select', options: ['PG / Hostel', 'Independent House', 'BnB', 'Apartment', 'Villa', 'Commercial', 'Office', 'Land', 'Other'], list: true },
       { name: 'address', label: 'Address', type: 'textarea', required: true },
       { name: 'city', label: 'City', type: 'text', list: true },
       { name: 'units', label: 'Units / floors', type: 'number', min: 0 },
-      { name: 'pg_for', label: 'PG / BnB for', type: 'select', options: ['Gents', 'Ladies', 'Co-living', 'Family', 'Anyone'] },
-      { name: 'food_included', label: 'Food included', type: 'bool', default: 0 },
+      { name: 'pg_for', label: 'PG / hostel for', type: 'select', options: ['Gents', 'Ladies', 'Co-living', 'Students', 'Working professionals', 'Family', 'Anyone'] },
+      { name: 'meals', label: 'Meals (mess)', type: 'select', options: ['No food', 'Breakfast only', 'Breakfast & dinner', 'All 3 meals'] },
+      { name: 'gate_timings', label: 'Gate / in-time', type: 'text', placeholder: 'e.g. Gate closes 10:30 pm' },
+      { name: 'visiting_hours', label: 'Visiting hours', type: 'text', placeholder: 'e.g. 10 am – 7 pm, visitors in common area only' },
+      { name: 'warden_contact_id', label: 'Warden / caretaker', type: 'ref', ref: 'contacts', onDelete: 'SET NULL' },
       { name: 'monthly_rent', label: 'Expected rent', type: 'money', min: 0, list: true },
       { name: 'status', label: 'Status', type: 'select', options: ['Vacant', 'Occupied', 'Under Maintenance'], default: 'Vacant', list: true },
       { name: 'owner_contact_id', label: 'Owner', type: 'ref', ref: 'contacts', onDelete: 'SET NULL' },
@@ -73,8 +76,8 @@ const resources = {
       { name: 'phone', label: 'Phone', type: 'phone', list: true },
       { name: 'email', label: 'Email', type: 'email', list: true },
       { name: 'property_id', label: 'Property', type: 'ref', ref: 'properties', onDelete: 'SET NULL', list: true },
-      { name: 'room_id', label: 'Room (PG / BnB)', type: 'ref', ref: 'rooms', dependsOn: 'property_id', onDelete: 'SET NULL' },
-      { name: 'bed_id', label: 'Bed (PG)', type: 'ref', ref: 'beds', dependsOn: 'room_id', onDelete: 'SET NULL', list: true },
+      { name: 'room_id', label: 'Room (PG / hostel / BnB)', type: 'ref', ref: 'rooms', dependsOn: 'property_id', onDelete: 'SET NULL' },
+      { name: 'bed_id', label: 'Bed (PG / hostel)', type: 'ref', ref: 'beds', dependsOn: 'room_id', onDelete: 'SET NULL', list: true },
       { name: 'unit', label: 'Unit / Flat no.', type: 'text' },
       { name: 'move_in', label: 'Move-in date', type: 'date' },
       { name: 'move_out', label: 'Move-out date', type: 'date' },
@@ -92,8 +95,8 @@ const resources = {
     display: 'id',
     fields: [
       { name: 'property_id', label: 'Property', type: 'ref', ref: 'properties', required: true, onDelete: 'RESTRICT', list: true },
-      { name: 'room_id', label: 'Room (PG / BnB)', type: 'ref', ref: 'rooms', dependsOn: 'property_id', onDelete: 'RESTRICT' },
-      { name: 'bed_id', label: 'Bed (PG)', type: 'ref', ref: 'beds', dependsOn: 'room_id', onDelete: 'RESTRICT' },
+      { name: 'room_id', label: 'Room (PG / hostel / BnB)', type: 'ref', ref: 'rooms', dependsOn: 'property_id', onDelete: 'RESTRICT' },
+      { name: 'bed_id', label: 'Bed (PG / hostel)', type: 'ref', ref: 'beds', dependsOn: 'room_id', onDelete: 'RESTRICT' },
       { name: 'tenant_id', label: 'Tenant', type: 'ref', ref: 'tenants', required: true, onDelete: 'RESTRICT', list: true },
       { name: 'start_date', label: 'Start date', type: 'date', required: true, list: true },
       { name: 'end_date', label: 'End date', type: 'date', required: true, list: true },
@@ -145,7 +148,7 @@ const resources = {
     display: 'name',
     fields: [
       { name: 'name', label: 'Name', type: 'text', required: true, list: true },
-      { name: 'category', label: 'Category', type: 'select', options: ['Owner', 'Plumber', 'Electrician', 'Carpenter', 'Painter', 'Cleaner', 'Security', 'Agent', 'Lawyer', 'Society Office', 'Other'], list: true },
+      { name: 'category', label: 'Category', type: 'select', options: ['Owner', 'Plumber', 'Electrician', 'Carpenter', 'Painter', 'Cleaner', 'Security', 'Warden', 'Cook', 'Agent', 'Lawyer', 'Society Office', 'Other'], list: true },
       { name: 'phone', label: 'Phone', type: 'phone', list: true },
       { name: 'email', label: 'Email', type: 'email', list: true },
       { name: 'company', label: 'Company', type: 'text' },
