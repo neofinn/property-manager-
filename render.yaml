@@ -1,0 +1,21 @@
+# One-click deploy on Render: New → Blueprint → pick this repository.
+services:
+  - type: web
+    name: property-manager
+    runtime: docker
+    plan: starter # a persistent disk needs a paid instance; free instances lose data on restart
+    healthCheckPath: /healthz
+    autoDeploy: true
+    disk:
+      name: data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: TRUST_PROXY
+        value: "1"
+      - key: CURRENCY
+        value: INR
+      - key: DEFAULT_COUNTRY_CODE
+        value: "91"
+      - key: BETA_INVITE_CODE
+        sync: false # you'll be asked for it; share it only with your beta testers

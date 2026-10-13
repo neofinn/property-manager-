@@ -13,6 +13,7 @@ let server;
 let base;
 let app;
 let dataDir;
+let cookie = '';
 
 before(async () => {
   dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pm-test-'));
@@ -20,6 +21,9 @@ before(async () => {
   server = http.createServer(app);
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   base = `http://127.0.0.1:${server.address().port}`;
+  const res = await call('POST', '/api/auth/signup', { company_name: 'Test Co', manager_name: 'Tess Manager', phone: '9876543210', password: 'password123' });
+  assert.equal(res.status, 201);
+  cookie = res.headers.get('set-cookie').split(';')[0];
 });
 
 after(() => {
@@ -28,12 +32,11 @@ after(() => {
   fs.rmSync(dataDir, { recursive: true, force: true });
 });
 
-async function call(method, url, body) {
-  const res = await fetch(base + url, {
-    method,
-    headers: body ? { 'Content-Type': 'application/json' } : {},
-    body: body ? JSON.stringify(body) : undefined,
-  });
+async function call(method, url, body, { auth = cookie, redirect = 'follow' } = {}) {
+  const headers = { 'X-Requested-With': 'fetch' };
+  if (body) headers['Content-Type'] = 'application/json';
+  if (auth) headers.Cookie = auth;
+  const res = await fetch(base + url, { method, headers, redirect, body: body ? JSON.stringify(body) : undefined });
   const type = res.headers.get('content-type') || '';
   return { status: res.status, headers: res.headers, body: type.includes('json') ? await res.json() : await res.text() };
 }
@@ -141,7 +144,7 @@ test('document upload, download, verification and cleanup', async () => {
   assert.equal(doc.file_name, 'id card.pdf');
   assert.equal(doc.file_stored, undefined, 'internal file name is not exposed');
 
-  const file = await fetch(base + doc.file_url);
+  const file = await fetch(base + doc.file_url, { headers: { Cookie: cookie } });
   assert.equal(file.status, 200);
   assert.equal(file.headers.get('content-type'), 'application/pdf');
   assert.equal(file.headers.get('content-security-policy'), 'sandbox');
@@ -150,7 +153,7 @@ test('document upload, download, verification and cleanup', async () => {
   const html = (await call('POST', '/api/documents', {
     title: 'evil', file: { name: 'x.html', type: 'text/html', data: Buffer.from('<script>alert(1)</script>').toString('base64') },
   })).body;
-  const htmlRes = await fetch(base + html.file_url);
+  const htmlRes = await fetch(base + html.file_url, { headers: { Cookie: cookie } });
   assert.match(htmlRes.headers.get('content-disposition'), /^attachment/);
 
   let rem = (await call('GET', '/api/reminders')).body;
@@ -159,9 +162,10 @@ test('document upload, download, verification and cleanup', async () => {
   rem = (await call('GET', '/api/reminders')).body;
   assert.ok(!rem.documents_unverified.some((d) => d.document_id === doc.id));
 
-  const before = fs.readdirSync(path.join(dataDir, 'uploads')).length;
+  const uploads = path.join(dataDir, 'companies', '1', 'uploads');
+  const before = fs.readdirSync(uploads).length;
   await call('DELETE', `/api/documents/${doc.id}`);
-  assert.equal(fs.readdirSync(path.join(dataDir, 'uploads')).length, before - 1);
+  assert.equal(fs.readdirSync(uploads).length, before - 1);
 });
 
 test('CSV export neutralises formulas', async () => {
@@ -187,19 +191,80 @@ test('due date rules', () => {
   assert.equal(dueDateFor({ ...a, rent_due_day: 15 }, '2026-12'), null, 'not due after agreement ends');
 });
 
-test('basic auth when a password is configured', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pm-auth-'));
-  const secured = createApp({ dataDir: dir, password: 's3cret' });
-  const srv = http.createServer(secured);
+test('signup validation, login, logout and sessions', async () => {
+  const bad = await call('POST', '/api/auth/signup', { company_name: '', manager_name: 'A', phone: '123', password: 'short' }, { auth: '' });
+  assert.equal(bad.status, 400);
+  assert.deepEqual(Object.keys(bad.body.details).sort(), ['company_name', 'manager_name', 'password', 'phone']);
+
+  const dup = await call('POST', '/api/auth/signup', { company_name: 'X Co', manager_name: 'Xavier', phone: '+91 98765 43210', password: 'password123' }, { auth: '' });
+  assert.match(dup.body.details.phone, /already exists/);
+
+  // Not logged in: API is 401, pages redirect to the login page.
+  assert.equal((await call('GET', '/api/properties', null, { auth: '' })).status, 401);
+  const page = await call('GET', '/', null, { auth: '', redirect: 'manual' });
+  assert.equal(page.status, 302);
+  assert.equal(page.headers.get('location'), '/login');
+  assert.match((await call('GET', '/signup', null, { auth: '' })).body, /Company name/);
+  assert.equal((await call('GET', '/login', null, { redirect: 'manual' })).headers.get('location'), '/', 'logged in users skip the login page');
+
+  assert.equal((await call('POST', '/api/auth/login', { phone: '9876543210', password: 'wrong-password' }, { auth: '' })).status, 401);
+  const login = await call('POST', '/api/auth/login', { phone: '098765 43210', password: 'password123' }, { auth: '' });
+  assert.equal(login.status, 200);
+  assert.equal(login.body.company.company_name, 'Test Co');
+  assert.equal(login.body.company.password_hash, undefined);
+  const setCookie = login.headers.get('set-cookie');
+  assert.match(setCookie, /HttpOnly/);
+  assert.match(setCookie, /SameSite=Lax/);
+  const second = setCookie.split(';')[0];
+  assert.equal((await call('GET', '/api/auth/me', null, { auth: second })).body.company.manager_name, 'Tess Manager');
+
+  await call('POST', '/api/auth/logout', null, { auth: second });
+  assert.equal((await call('GET', '/api/auth/me', null, { auth: second })).status, 401);
+  assert.equal((await call('GET', '/api/auth/me')).status, 200, 'other sessions stay logged in');
+
+  // Writes without the X-Requested-With header are refused (CSRF protection).
+  const csrf = await fetch(`${base}/api/properties`, { method: 'POST', headers: { Cookie: cookie, 'Content-Type': 'application/json' }, body: '{}' });
+  assert.equal(csrf.status, 403);
+});
+
+test('each company only sees its own data; sample data and feedback', async () => {
+  const signup = await call('POST', '/api/auth/signup', { company_name: 'Second Co', manager_name: 'Sam', phone: '+44 7700 900123', password: 'another-pass' }, { auth: '' });
+  assert.equal(signup.body.company.phone, '+447700900123');
+  const other = signup.headers.get('set-cookie').split(';')[0];
+
+  assert.deepEqual((await call('GET', '/api/properties', null, { auth: other })).body, []);
+  const mine = (await call('GET', '/api/properties')).body;
+  assert.ok(mine.length > 0);
+  assert.equal((await call('GET', `/api/properties/${mine[0].id}`, null, { auth: other })).status, 404);
+
+  const cfg = (await call('GET', '/api/config', null, { auth: other })).body;
+  assert.equal(cfg.company.company_name, 'Second Co');
+  assert.equal(cfg.empty, true);
+  assert.equal((await call('POST', '/api/sample-data', null, { auth: other })).status, 201);
+  const props = (await call('GET', '/api/properties', null, { auth: other })).body;
+  assert.ok(props.some((p) => p.type === 'PG / Hostel'));
+  assert.equal((await call('POST', '/api/sample-data', null, { auth: other })).status, 409, 'only into an empty account');
+
+  assert.equal((await call('POST', '/api/feedback', { message: 'Love the bed board', page: '#/bedboard' }, { auth: other })).status, 201);
+  assert.equal(app.accounts.listFeedback()[0].company_name, 'Second Co');
+});
+
+test('invite code is required when configured', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pm-invite-'));
+  const invited = createApp({ dataDir: dir, inviteCode: 'BETA2026' });
+  const srv = http.createServer(invited);
   await new Promise((resolve) => srv.listen(0, '127.0.0.1', resolve));
-  const url = `http://127.0.0.1:${srv.address().port}/api/config`;
+  const url = `http://127.0.0.1:${srv.address().port}/api/auth/signup`;
+  const post = (body) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'fetch' }, body: JSON.stringify(body) });
+  const input = { company_name: 'Invited Co', manager_name: 'Ivy', phone: '9123456789', password: 'password123' };
   try {
-    assert.equal((await fetch(url)).status, 401);
-    const ok = await fetch(url, { headers: { Authorization: `Basic ${Buffer.from('admin:s3cret').toString('base64')}` } });
-    assert.equal(ok.status, 200);
+    const denied = await post(input);
+    assert.equal(denied.status, 400);
+    assert.ok((await denied.json()).details.invite_code);
+    assert.equal((await post({ ...input, invite_code: 'BETA2026' })).status, 201);
   } finally {
     srv.close();
-    secured.close();
+    invited.close();
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });

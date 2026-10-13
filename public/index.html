@@ -4,13 +4,21 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Property Manager</title>
+  <meta name="theme-color" content="#2f6f5e">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/icon-192.png">
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
   <header class="topbar">
     <button class="menu-btn" id="menu-btn" aria-label="Toggle menu">☰</button>
-    <h1>Property Manager</h1>
+    <h1>Property Manager <span class="beta">Beta</span></h1>
+    <div class="account" id="account">
+      <button class="btn small" id="feedback-btn" type="button">Feedback</button>
+      <span class="account-name" id="account-name"></span>
+      <button class="btn small" id="logout-btn" type="button">Log out</button>
+    </div>
   </header>
   <div class="layout">
     <nav class="sidebar" id="sidebar" aria-label="Sections"></nav>
@@ -28,6 +36,23 @@
       <footer class="dialog-foot">
         <button type="button" class="btn" data-close>Cancel</button>
         <button type="submit" class="btn primary" id="save-btn">Save</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <dialog id="feedback-dialog">
+    <form id="feedback-form" method="dialog" novalidate>
+      <header class="dialog-head">
+        <h2>Send feedback</h2>
+        <button type="button" class="icon-btn" data-close-feedback aria-label="Close">✕</button>
+      </header>
+      <div class="feedback-body">
+        <p class="muted">Thanks for testing the beta! Tell us what's confusing, broken, or missing.</p>
+        <textarea name="message" rows="6" required aria-label="Your feedback" placeholder="What happened? What did you expect?"></textarea>
+      </div>
+      <footer class="dialog-foot">
+        <button type="button" class="btn" data-close-feedback>Cancel</button>
+        <button type="submit" class="btn primary">Send</button>
       </footer>
     </form>
   </dialog>

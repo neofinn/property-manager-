@@ -115,9 +115,13 @@
   async function api(path, options = {}) {
     const res = await fetch(`/api/${path}`, {
       method: options.method || 'GET',
-      headers: options.body ? { 'Content-Type': 'application/json' } : undefined,
+      headers: { 'X-Requested-With': 'fetch', ...(options.body ? { 'Content-Type': 'application/json' } : {}) },
       body: options.body ? JSON.stringify(options.body) : undefined,
     });
+    if (res.status === 401) {
+      location.replace('/login');
+      throw new Error('Please log in');
+    }
     const data = res.headers.get('content-type')?.includes('json') ? await res.json() : await res.text();
     if (!res.ok) {
       const err = new Error((data && data.error) || `Request failed (${res.status})`);
@@ -219,6 +223,15 @@
     const pct = r.expected_this_month ? Math.round((r.collected_this_month / r.expected_this_month) * 100) : 0;
     main.innerHTML = `
       <div class="page-head"><h2>Dashboard</h2><span class="muted">${esc(fmtDate(d.today))}</span></div>
+      ${d.counts.properties === 0 ? `
+        <section class="card welcome">
+          <h3>Welcome, ${esc(state.config.company.manager_name)}!</h3>
+          <p>Start by adding your first property, or load sample data to explore every feature (an apartment, a villa, a PG with rooms and beds, and a BnB). You can delete the sample records later.</p>
+          <div class="head-actions">
+            <a class="btn primary" href="#/properties?new=1">+ Add property</a>
+            <button class="btn" data-action="load-sample">Load sample data</button>
+          </div>
+        </section>` : ''}
       <section class="stats">
         ${stat('Properties', d.counts.properties, `${d.occupancy.occupied} occupied · ${d.occupancy.total - d.occupancy.occupied} vacant`, '#/properties')}
         ${d.beds.total ? stat('PG / hostel beds', `${d.beds.occupied}/${d.beds.total}`, `${d.beds.total - d.beds.occupied} vacant · ${d.beds.rooms} rooms`, '#/bedboard') : ''}
@@ -398,7 +411,7 @@
     const computed = COMPUTED_COLUMNS[name] || [];
     const filterFields = def.fields.filter((f) => f.type === 'select' && f.options.length <= 12);
     const params = new URLSearchParams();
-    for (const [k, v] of Object.entries(query)) if (v !== '' && k !== 'id') params.set(k, v);
+    for (const [k, v] of Object.entries(query)) if (v !== '' && k !== 'id' && k !== 'new') params.set(k, v);
     const rows = await api(`${name}?${params}`);
 
     main.innerHTML = `
@@ -457,6 +470,7 @@
       search.setSelectionRange(search.value.length, search.value.length);
     }
 
+    if (query.new) openForm(name);
     if (query.id) {
       const row = rows.find((r) => String(r.id) === query.id) || (await api(`${name}/${query.id}`).catch(() => null));
       if (row) openForm(name, row);
@@ -650,10 +664,11 @@
     formContext = null;
     const dialog = $('#dialog');
     if (dialog.open) dialog.close();
-    // Drop ?id= from the URL so the record doesn't reopen on refresh.
+    // Drop ?id= / ?new= from the URL so the form doesn't reopen on refresh.
     const { view, query } = parseHash();
-    if (query.id) {
+    if (query.id || query.new) {
       delete query.id;
+      delete query.new;
       const qs = new URLSearchParams(query).toString();
       history.replaceState(null, '', `#/${view}${qs ? `?${qs}` : ''}`);
     }
@@ -726,6 +741,19 @@
         paid_on: today(),
       });
     }
+    if (action === 'load-sample') {
+      el.disabled = true;
+      try {
+        await api('sample-data', { method: 'POST' });
+        state.optionsCache = {};
+        toast('Sample data loaded');
+        route();
+      } catch (err) {
+        el.disabled = false;
+        toast(err.message, true);
+      }
+      return;
+    }
     if (action === 'bill-paid') return quickUpdate('bills', id, { status: 'Paid', paid_on: today() }, 'Bill marked as paid');
     if (action === 'doc-verify') return quickUpdate('documents', id, { verified: true, verified_on: today() }, 'Document marked as verified');
     if (action === 'schedule-done') return quickUpdate('schedules', id, { status: 'Done' }, 'Marked as done');
@@ -739,6 +767,32 @@
   });
 
   $('#record-form').addEventListener('submit', submitForm);
+
+  $('#logout-btn').addEventListener('click', async () => {
+    await api('auth/logout', { method: 'POST' }).catch(() => {});
+    location.replace('/login');
+  });
+
+  const feedbackDialog = $('#feedback-dialog');
+  $('#feedback-btn').addEventListener('click', () => feedbackDialog.showModal());
+  feedbackDialog.addEventListener('click', (e) => {
+    if (e.target.closest('[data-close-feedback]')) feedbackDialog.close();
+  });
+  $('#feedback-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const form = e.target;
+    if (!form.message.value.trim()) return form.message.focus();
+    try {
+      await api('feedback', { method: 'POST', body: { message: form.message.value, page: location.hash || '#/dashboard' } });
+      form.reset();
+      feedbackDialog.close();
+      toast('Thank you! Your feedback was sent.');
+    } catch (err) {
+      toast(err.message, true);
+    }
+  });
+
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
   $('#dialog').addEventListener('cancel', () => closeDialog());
   $('#menu-btn').addEventListener('click', () => document.body.classList.toggle('nav-open'));
   window.addEventListener('hashchange', route);
@@ -746,6 +800,7 @@
   api('config')
     .then((config) => {
       state.config = config;
+      $('#account-name').textContent = `${config.company.company_name} · ${config.company.manager_name}`;
       route();
     })
     .catch((err) => {

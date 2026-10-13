@@ -10,13 +10,22 @@ const host = process.env.HOST || '127.0.0.1';
 const app = createApp({
   dataDir: process.env.DATA_DIR || path.join(__dirname, 'data'),
   currency: process.env.CURRENCY || 'INR',
-  user: process.env.APP_USER,
-  password: process.env.APP_PASSWORD,
+  defaultCountryCode: process.env.DEFAULT_COUNTRY_CODE || '91',
+  inviteCode: process.env.BETA_INVITE_CODE || '',
+  trustProxy: process.env.TRUST_PROXY === '1',
 });
 
-http.createServer(app).listen(port, host, () => {
+const server = http.createServer(app).listen(port, host, () => {
   console.log(`Property Manager CRM running at http://${host}:${port}`);
-  if (!process.env.APP_PASSWORD) {
-    console.log('Tip: set APP_PASSWORD (and optionally APP_USER) to require a login.');
+  if (!process.env.BETA_INVITE_CODE) {
+    console.log('Tip: set BETA_INVITE_CODE so only people you invite can sign up.');
   }
 });
+
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  process.on(signal, () => {
+    server.close();
+    app.close();
+    process.exit(0);
+  });
+}

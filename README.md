@@ -46,32 +46,76 @@ already filled in with the outstanding amount.
 
 Agreements that are about to expire get a renewal reminder in the same way.
 
+### Accounts
+
+Each company signs up with its **company name, manager name, phone number and
+password**, then logs in with the phone number and password. Every company's
+records and uploaded documents are kept in a separate database, so beta testers
+never see each other's data. A new account can load **sample data** from the
+dashboard to try every feature. The **Feedback** button in the top bar sends
+comments to you (see `npm run feedback`).
+
+On a phone, open the site and choose **Add to Home Screen** (Android: *Install
+app*). It then opens full-screen like a normal app.
+
 ## Getting started
 
 Requires **Node.js 22.13 or newer**.
 
 ```bash
-npm start          # http://127.0.0.1:3000
-npm run seed       # optional: load sample data into an empty database
+npm start          # http://127.0.0.1:3000, then sign up
+npm run seed       # optional: demo account (phone 9999999999, password demo12345) with sample data
+npm run feedback   # list beta sign-ups and feedback
 npm test
 ```
+
+## Deploying for beta testing
+
+The app ships as a Docker image. Accounts, data and uploaded documents are all
+stored under `/data`, so give it a **persistent volume** there. Without one,
+everything is lost when the server restarts. Serve it over **HTTPS**, which
+every host below does for you.
+
+### Render (blueprint included)
+
+1. Push this repository to GitHub.
+2. In Render, choose **New → Blueprint**, pick the repository, and Render reads
+   `render.yaml`.
+3. When asked for `BETA_INVITE_CODE`, enter a code you'll give your testers.
+4. Share the `https://….onrender.com` link and the invite code with them.
+
+The blueprint uses the *Starter* plan, because Render only attaches a
+persistent disk to paid instances.
+
+### Any Docker host (Railway, Fly.io, a VPS…)
+
+```bash
+docker build -t property-manager .
+docker run -d -p 3000:3000 -v pm-data:/data \
+  -e BETA_INVITE_CODE=choose-a-code -e TRUST_PROXY=1 property-manager
+```
+
+Mount a volume at `/data`, and set `TRUST_PROXY=1` when the app runs behind
+the host's HTTPS proxy. `GET /healthz` returns `ok` for health checks.
 
 ### Configuration (environment variables)
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `PORT` | `3000` | HTTP port |
-| `HOST` | `127.0.0.1` | Bind address. Use `0.0.0.0` to allow access from other devices |
-| `DATA_DIR` | `./data` | Where the SQLite database and uploaded files are stored |
+| `HOST` | `127.0.0.1` (`0.0.0.0` in Docker) | Bind address |
+| `DATA_DIR` | `./data` (`/data` in Docker) | Where accounts, each company's database and uploaded files are stored |
+| `BETA_INVITE_CODE` | *(unset)* | When set, signing up requires this code. Strongly recommended for a public beta |
+| `DEFAULT_COUNTRY_CODE` | `91` | Added to 10-digit phone numbers typed without a country code |
 | `CURRENCY` | `INR` | ISO currency code used to format amounts |
-| `APP_USER` / `APP_PASSWORD` | `admin` / *(unset)* | When `APP_PASSWORD` is set, every request requires HTTP Basic login |
+| `TRUST_PROXY` | *(unset)* | Set to `1` behind a reverse proxy, so secure cookies and login rate limits use the real client details |
 
-> The app stores tenants' ID documents. **Set `APP_PASSWORD`** before exposing
-> it beyond your own machine, and put it behind HTTPS (for example with a
-> reverse proxy).
+Passwords are stored as salted scrypt hashes. Sessions use an HttpOnly,
+SameSite cookie that lasts 30 days. Logins are rate-limited.
 
 Back up the app by copying the `DATA_DIR` folder. Every list can also be
-exported to CSV.
+exported to CSV. If you used the app before accounts were added, the first
+account to sign up takes over the existing data.
 
 ## Project layout
 
@@ -81,19 +125,29 @@ src/schema.js        Entity definitions (fields, types, relations); the UI and A
 src/db.js            SQLite setup and migrations
 src/store.js         Validation and CRUD
 src/reminders.js     Rent, bill, agreement, document and schedule reminders, plus dashboard stats
-src/app.js           REST API, file uploads and static files
-public/              Single-page web app (vanilla JS, no build step)
-scripts/seed.js      Sample data
+src/app.js           REST API, sessions, per-company databases, file uploads and static files
+src/accounts.js      Sign-up, login, sessions and beta feedback
+src/sample.js        Sample data
+public/              Single-page web app (vanilla JS, no build step), sign-in page, installable-app files
+scripts/             Demo account (seed) and feedback report
+Dockerfile, render.yaml  Deployment
 test/                API tests (node:test)
 ```
 
 ## API
 
-All endpoints return JSON. `:resource` is one of `properties`, `tenants`,
+All endpoints return JSON. They need a logged-in session cookie, except
+`/api/auth/*`, and requests other than GET must send the header
+`X-Requested-With: fetch`. `:resource` is one of `properties`, `tenants`,
 `rooms`, `beds`, `agreements`, `rent_payments`, `bills`, `contacts`, `documents`, `schedules`.
 
 | Method & path | Description |
 | --- | --- |
+| `POST /api/auth/signup` | `{company_name, manager_name, phone, password, invite_code?}`: create an account and log in |
+| `POST /api/auth/login` / `POST /api/auth/logout` | `{phone, password}` |
+| `GET /api/auth/me` | The logged-in company |
+| `POST /api/sample-data` | Load sample data into an empty account |
+| `POST /api/feedback` | `{message, page}` |
 | `GET /api/:resource?q=&<field>=&sort=&dir=` | List, with search and exact-match filters |
 | `POST /api/:resource` | Create a record |
 | `GET /api/:resource/:id` | Get one record |

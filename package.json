@@ -10,7 +10,8 @@
   "scripts": {
     "start": "node --disable-warning=ExperimentalWarning server.js",
     "seed": "node --disable-warning=ExperimentalWarning scripts/seed.js",
-    "test": "node --disable-warning=ExperimentalWarning --test"
+    "test": "node --disable-warning=ExperimentalWarning --test",
+    "feedback": "node --disable-warning=ExperimentalWarning scripts/feedback.js"
   },
   "license": "MIT"
 }
