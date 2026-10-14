@@ -3,9 +3,9 @@
 // The company-scoped REST API, independent of how requests arrive. The Node
 // server (src/app.js) and the in-browser demo (src/browser/) both call
 // handleTenantApi with:
-//   env  = { database, store, files, currency, maxFileBytes, onFeedback(body) }
+//   env  = { database, store, files, currency, maxFileBytes, onFeedback(body), notice?, readOnly? }
 //   req  = { method, parts, query, readBody: async () => object, company }
-// `files` stores uploaded bytes: save(base64) -> { stored, size },
+// `files` stores uploaded bytes (all async): save(base64) -> { stored, size },
 // read(stored) -> bytes, remove(stored).
 // It resolves { status, json } | { status, text, headers } | { status, file }.
 
@@ -42,7 +42,7 @@ function publicRow(resourceName, row) {
 }
 
 // Turns `{ name, type, data(base64) }` from the client into stored columns.
-function saveUploads(env, resourceName, body) {
+async function saveUploads(env, resourceName, body) {
   const columns = {};
   const written = [];
   const maxBytes = env.maxFileBytes || DEFAULT_MAX_FILE_BYTES;
@@ -60,9 +60,9 @@ function saveUploads(env, resourceName, body) {
     if (upload.data.length > Math.ceil(maxBytes / 3) * 4 + 4) {
       throw new HttpError(400, 'Validation failed', { [field.name]: `${field.label} must be under ${Math.round(maxBytes / 1048576)} MB` });
     }
-    const { stored, size } = env.files.save(upload.data);
+    const { stored, size } = await env.files.save(upload.data);
     if (!size) {
-      env.files.remove(stored);
+      await env.files.remove(stored);
       throw new HttpError(400, 'Validation failed', { [field.name]: `${field.label} is empty` });
     }
     written.push(stored);
@@ -77,12 +77,12 @@ function saveUploads(env, resourceName, body) {
   return { columns, written };
 }
 
-function withUploads(env, resourceName, body, action) {
-  const { columns, written } = saveUploads(env, resourceName, body);
+async function withUploads(env, resourceName, body, action) {
+  const { columns, written } = await saveUploads(env, resourceName, body);
   try {
-    return action(columns);
+    return await action(columns);
   } catch (err) {
-    written.forEach((stored) => env.files.remove(stored));
+    for (const stored of written) await env.files.remove(stored);
     throw err;
   }
 }
@@ -97,11 +97,18 @@ async function handleTenantApi(env, req) {
   });
 
   if (parts[0] === 'config' && method === 'GET') {
-    return { status: 200, json: { currency, resources, company, empty: isEmpty(database) } };
+    return {
+      status: 200,
+      json: { currency, resources, company, empty: await isEmpty(database), notice: env.notice || '', readOnly: Boolean(env.readOnly) },
+    };
+  }
+  // Maintenance mode: everything stays readable, nothing can change (feedback still goes through).
+  if (env.readOnly && method !== 'GET' && parts[0] !== 'feedback') {
+    throw new HttpError(503, env.notice || 'The app is in maintenance mode. Changes are paused for a few minutes.');
   }
   if (parts[0] === 'sample-data' && method === 'POST') {
-    if (!isEmpty(database)) throw new HttpError(409, 'Sample data can only be loaded into an empty account');
-    loadSampleData(store);
+    if (!(await isEmpty(database))) throw new HttpError(409, 'Sample data can only be loaded into an empty account');
+    await loadSampleData(store);
     return { status: 201, json: { ok: true } };
   }
   if (parts[0] === 'feedback' && method === 'POST') {
@@ -109,17 +116,17 @@ async function handleTenantApi(env, req) {
     return { status: 201, json: { ok: true } };
   }
   if (parts[0] === 'dashboard' && method === 'GET') {
-    return { status: 200, json: computeDashboard(database, reminderOpts()) };
+    return { status: 200, json: await computeDashboard(database, reminderOpts()) };
   }
   if (parts[0] === 'reminders' && parts.length === 1 && method === 'GET') {
-    return { status: 200, json: computeReminders(database, reminderOpts()) };
+    return { status: 200, json: await computeReminders(database, reminderOpts()) };
   }
   if (parts[0] === 'reminders' && parts[1] === 'log' && method === 'POST') {
     const body = await req.readBody();
     const key = typeof body.key === 'string' ? body.key.slice(0, 200) : '';
     const channel = ['whatsapp', 'sms', 'email', 'call', 'manual'].includes(body.channel) ? body.channel : null;
     if (!key || !channel) throw new HttpError(400, 'key and a valid channel are required');
-    database.prepare('INSERT INTO reminder_log (reminder_key, channel) VALUES (?, ?)').run(key, channel);
+    await database.run('INSERT INTO reminder_log (reminder_key, channel) VALUES (?, ?)', key, channel);
     return { status: 201, json: { ok: true } };
   }
 
@@ -130,14 +137,14 @@ async function handleTenantApi(env, req) {
   }
 
   if (!id) {
-    if (method === 'GET') return { status: 200, json: store.list(resourceName, query).map((r) => publicRow(resourceName, r)) };
+    if (method === 'GET') return { status: 200, json: (await store.list(resourceName, query)).map((r) => publicRow(resourceName, r)) };
     if (method === 'POST') {
       const body = await req.readBody();
-      const row = withUploads(env, resourceName, body, (cols) => store.create(resourceName, body, cols));
+      const row = await withUploads(env, resourceName, body, (cols) => store.create(resourceName, body, cols));
       return { status: 201, json: publicRow(resourceName, row) };
     }
   } else if (id === 'options' && method === 'GET') {
-    return { status: 200, json: store.options(resourceName) };
+    return { status: 200, json: await store.options(resourceName) };
   } else if (id === 'export.csv' && method === 'GET') {
     const def = getResource(resourceName);
     const cols = ['id'];
@@ -146,7 +153,7 @@ async function handleTenantApi(env, req) {
       if (f.type === 'ref') cols.push(`${f.name}_label`);
     }
     cols.push('created_at', 'updated_at');
-    const rows = store.list(resourceName, { ...query, limit: 5000 });
+    const rows = await store.list(resourceName, { ...query, limit: 5000 });
     const csv = [cols.join(','), ...rows.map((r) => cols.map((c) => csvCell(r[c])).join(','))].join('\r\n');
     return {
       status: 200,
@@ -156,33 +163,33 @@ async function handleTenantApi(env, req) {
   } else if (sub) {
     const field = fileFields(resourceName).find((f) => f.name === sub);
     if (!field || method !== 'GET') throw new HttpError(404, 'Not found');
-    const row = store.get(resourceName, id);
+    const row = await store.get(resourceName, id);
     const stored = row[`${field.name}_stored`];
     if (!stored) throw new HttpError(404, 'No file uploaded');
     const mime = row[`${field.name}_mime`] || 'application/octet-stream';
     return {
       status: 200,
       file: {
-        bytes: env.files.read(stored),
+        bytes: await env.files.read(stored),
         mime,
         name: row[`${field.name}_name`] || 'file',
         inline: INLINE_MIME.test(mime) && query.download === undefined,
       },
     };
   } else {
-    if (method === 'GET') return { status: 200, json: publicRow(resourceName, store.get(resourceName, id)) };
+    if (method === 'GET') return { status: 200, json: publicRow(resourceName, await store.get(resourceName, id)) };
     if (method === 'PUT' || method === 'PATCH') {
       const body = await req.readBody();
-      const before = store.get(resourceName, id);
-      const row = withUploads(env, resourceName, body, (cols) => store.update(resourceName, id, body, cols));
+      const before = await store.get(resourceName, id);
+      const row = await withUploads(env, resourceName, body, (cols) => store.update(resourceName, id, body, cols));
       for (const f of fileFields(resourceName)) {
-        if (before[`${f.name}_stored`] !== row[`${f.name}_stored`]) env.files.remove(before[`${f.name}_stored`]);
+        if (before[`${f.name}_stored`] !== row[`${f.name}_stored`]) await env.files.remove(before[`${f.name}_stored`]);
       }
       return { status: 200, json: publicRow(resourceName, row) };
     }
     if (method === 'DELETE') {
-      const row = store.remove(resourceName, id);
-      for (const f of fileFields(resourceName)) env.files.remove(row[`${f.name}_stored`]);
+      const row = await store.remove(resourceName, id);
+      for (const f of fileFields(resourceName)) await env.files.remove(row[`${f.name}_stored`]);
       return { status: 200, json: { ok: true } };
     }
   }

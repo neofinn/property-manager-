@@ -10,6 +10,8 @@ const { handleTenantApi } = require('../api');
 const { validateSignup, normalizePhone } = require('../account-rules');
 const { loadSampleData } = require('../sample');
 const { SqlJsDatabase } = require('./sqljs-adapter');
+const { SqliteDatabase } = require('../database/sqlite');
+const { dbFiles } = require('../files');
 
 const MAX_FILE_BYTES = 3 * 1024 * 1024;
 const PBKDF2_ITERATIONS = 150000;
@@ -47,8 +49,8 @@ async function verifyPassword(password, stored) {
   return diff === 0;
 }
 
-function initAccountTables(db) {
-  db.exec(`
+async function initAccountTables(db) {
+  await db.exec(`
     CREATE TABLE IF NOT EXISTS account (
       id INTEGER PRIMARY KEY CHECK (id = 1),
       company_name TEXT NOT NULL,
@@ -58,7 +60,6 @@ function initAccountTables(db) {
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
     CREATE TABLE IF NOT EXISTS sessions (token TEXT PRIMARY KEY, created_at TEXT NOT NULL DEFAULT (datetime('now')));
-    CREATE TABLE IF NOT EXISTS files (stored TEXT PRIMARY KEY, data BLOB NOT NULL);
   `);
 }
 
@@ -66,74 +67,65 @@ function initAccountTables(db) {
  * options: { SQL, bytes?, currency, defaultCountryCode, getToken(), setToken(token|null),
  *            onFeedback(company, body), onSignup(company) }
  */
-function createBackend(options) {
-  const database = new SqlJsDatabase(options.SQL, options.bytes);
-  initSchema(database);
-  initAccountTables(database);
+async function createBackend(options) {
+  const raw = new SqlJsDatabase(options.SQL, options.bytes);
+  const database = new SqliteDatabase(raw);
+  await initSchema(database);
+  await initAccountTables(database);
   const store = new Store(database);
   const currency = options.currency || 'INR';
   const defaultCountryCode = options.defaultCountryCode || '91';
 
-  const files = {
-    save(base64) {
-      const bytes = fromBase64(base64);
-      const stored = crypto.randomUUID();
-      database.prepare('INSERT INTO files (stored, data) VALUES (?, ?)').run(stored, bytes);
-      return { stored, size: bytes.length };
-    },
-    read(stored) {
-      const row = database.prepare('SELECT data FROM files WHERE stored = ?').get(stored);
-      if (!row) throw new HttpError(404, 'File is missing');
-      return row.data;
-    },
-    remove(stored) {
-      if (stored) database.prepare('DELETE FROM files WHERE stored = ?').run(stored);
-    },
-  };
+  const files = dbFiles(database, { decodeBase64: fromBase64 });
 
-  const account = () => database.prepare('SELECT id, company_name, manager_name, phone, created_at FROM account WHERE id = 1').get() || null;
+  const account = async () => (await database.get('SELECT id, company_name, manager_name, phone, created_at FROM account WHERE id = 1')) || null;
 
-  function loggedInCompany() {
+  async function loggedInCompany() {
     const token = options.getToken();
     if (!token) return null;
-    return database.prepare('SELECT 1 FROM sessions WHERE token = ?').get(token) ? account() : null;
+    return (await database.get('SELECT 1 AS x FROM sessions WHERE token = ?', token)) ? account() : null;
   }
 
-  function startSession() {
+  async function startSession() {
     const token = randomToken();
-    database.prepare('INSERT INTO sessions (token) VALUES (?)').run(token);
+    await database.run('INSERT INTO sessions (token) VALUES (?)', token);
     options.setToken(token);
-    return { status: 200, json: { company: account() } };
+    return { status: 200, json: { company: await account() } };
   }
 
   async function handleAuth(method, action, body) {
     if (action === 'config' && method === 'GET') {
-      return { status: 200, json: { inviteRequired: false, beta: true, hasAccount: Boolean(account()) } };
+      return { status: 200, json: { inviteRequired: false, signupsOpen: true, beta: true, hasAccount: Boolean(await account()) } };
     }
     if (action === 'me' && method === 'GET') {
-      const company = loggedInCompany();
+      const company = await loggedInCompany();
       if (!company) throw new HttpError(401, 'Please log in');
       return { status: 200, json: { company } };
     }
     if (action === 'signup' && method === 'POST') {
       const { values, errors } = validateSignup(body, { defaultCountryCode });
-      if (account()) {
+      const existing = await account();
+      if (existing) {
         throw new HttpError(400, 'This claude.ai account already has a company. Please log in.', {
-          phone: `Already signed up as ${account().company_name}`,
+          phone: `Already signed up as ${existing.company_name}`,
         });
       }
       if (Object.keys(errors).length) throw new HttpError(400, 'Please fix the highlighted fields', errors);
       const hash = await hashPassword(values.password);
-      database
-        .prepare('INSERT INTO account (id, company_name, manager_name, phone, password_hash) VALUES (1, ?, ?, ?, ?)')
-        .run(values.company_name, values.manager_name, values.phone, hash);
-      const result = startSession();
+      await database.run(
+        'INSERT INTO account (id, company_name, manager_name, phone, password_hash) VALUES (1, ?, ?, ?, ?)',
+        values.company_name,
+        values.manager_name,
+        values.phone,
+        hash,
+      );
+      const result = await startSession();
       result.status = 201;
-      await options.onSignup?.(account());
+      await options.onSignup?.(await account());
       return result;
     }
     if (action === 'login' && method === 'POST') {
-      const row = database.prepare('SELECT * FROM account WHERE id = 1').get();
+      const row = await database.get('SELECT * FROM account WHERE id = 1');
       const phone = normalizePhone(body.phone, defaultCountryCode);
       const ok = row && phone === row.phone && (await verifyPassword(typeof body.password === 'string' ? body.password : '', row.password_hash));
       if (!ok) {
@@ -143,16 +135,24 @@ function createBackend(options) {
     }
     if (action === 'logout' && method === 'POST') {
       const token = options.getToken();
-      if (token) database.prepare('DELETE FROM sessions WHERE token = ?').run(token);
+      if (token) await database.run('DELETE FROM sessions WHERE token = ?', token);
       options.setToken(null);
       return { status: 200, json: { ok: true } };
     }
     throw new HttpError(404, 'Not found');
   }
 
+  // Requests run one at a time so an awaited transaction never interleaves with another.
+  let queue = Promise.resolve();
+  function request(method, url, bodyText) {
+    const run = queue.then(() => handle(method, url, bodyText));
+    queue = run.catch(() => {});
+    return run;
+  }
+
   // Handles one /api request. Resolves { status, json } | { status, text, headers } | { status, file }
   // plus `changed: true` when the database was modified.
-  async function request(method, url, bodyText) {
+  async function handle(method, url, bodyText) {
     const parsed = new URL(url, 'https://demo.invalid');
     const parts = parsed.pathname.replace(/^\/api\//, '').split('/').filter(Boolean);
     const query = Object.fromEntries(parsed.searchParams);
@@ -169,7 +169,7 @@ function createBackend(options) {
     const changed = method !== 'GET';
     try {
       if (parts[0] === 'auth') return { ...(await handleAuth(method, parts[1], await readBody())), changed };
-      const company = loggedInCompany();
+      const company = await loggedInCompany();
       if (!company) throw new HttpError(401, 'Please log in');
       const env = {
         database,
@@ -189,8 +189,8 @@ function createBackend(options) {
 
   return {
     request,
-    export: () => database.export(),
-    hasAccount: () => Boolean(account()),
+    export: () => raw.export(),
+    hasAccount: async () => Boolean(await account()),
     loadSampleData: () => loadSampleData(store),
     database,
   };

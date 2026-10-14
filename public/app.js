@@ -818,6 +818,9 @@
         state.config = config;
         moneyFmt = null;
         $('#account-name').textContent = `${config.company.company_name} · ${config.company.manager_name}`;
+        const banner = $('#notice-banner');
+        banner.textContent = config.notice || (config.readOnly ? 'Maintenance in progress: you can view your data, but changes are paused for a few minutes.' : '');
+        banner.hidden = !banner.textContent;
         route();
       })
       .catch((err) => {

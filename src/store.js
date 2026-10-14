@@ -146,19 +146,20 @@ function crossFieldErrors(resourceName, row) {
 }
 
 class Store {
+  // `db` is any backend from src/database.
   constructor(db) {
     this.db = db;
   }
 
   // Validates `input` and returns the column values to write.
   // For updates, `existing` is the current row; missing fields keep their value.
-  validate(resourceName, input, existing) {
+  async validate(resourceName, input, existing) {
     const def = getResource(resourceName);
     const values = {};
     const errors = {};
 
     for (const field of def.fields) {
-      if (field.type === 'file') continue; // handled by the server
+      if (field.type === 'file') continue; // handled by the API layer
       let [value, err] = coerce(field, input[field.name]);
       if (err) {
         errors[field.name] = `${field.label} ${err}`;
@@ -168,7 +169,7 @@ class Store {
       if (value !== undefined) values[field.name] = value;
     }
 
-    if (!Object.keys(errors).length) Object.assign(errors, this.linkRoomAndBed(resourceName, input, values, existing));
+    if (!Object.keys(errors).length) Object.assign(errors, await this.linkRoomAndBed(resourceName, input, values, existing));
 
     for (const field of def.fields) {
       if (!field.required || errors[field.name]) continue;
@@ -177,7 +178,7 @@ class Store {
     }
 
     Object.assign(errors, crossFieldErrors(resourceName, { ...existing, ...values }));
-    if (!Object.keys(errors).length) Object.assign(errors, this.occupancyErrors(resourceName, { ...existing, ...values }, existing));
+    if (!Object.keys(errors).length) Object.assign(errors, await this.occupancyErrors(resourceName, { ...existing, ...values }, existing));
     if (Object.keys(errors).length) throw new HttpError(400, 'Validation failed', errors);
     return values;
   }
@@ -185,7 +186,7 @@ class Store {
   // Tenants and agreements can point at a room and bed. Fill in the room and
   // property from the chosen bed (and the property from the room), and reject
   // combinations that don't belong together.
-  linkRoomAndBed(resourceName, input, values, existing) {
+  async linkRoomAndBed(resourceName, input, values, existing) {
     if (resourceName !== 'tenants' && resourceName !== 'agreements') return {};
     const errors = {};
     const current = (name) => (values[name] !== undefined ? values[name] : existing ? existing[name] : null);
@@ -194,7 +195,7 @@ class Store {
     const bedId = current('bed_id');
     let bed = null;
     if (bedId) {
-      bed = this.db.prepare('SELECT * FROM beds WHERE id = ?').get(bedId);
+      bed = await this.db.get('SELECT * FROM beds WHERE id = ?', bedId);
       if (!bed) return { bed_id: 'Bed does not exist' };
       if (current('room_id') !== bed.room_id) {
         if (explicit('room_id')) errors.bed_id = 'Bed is not in the selected room';
@@ -205,7 +206,7 @@ class Store {
     const roomId = current('room_id');
     let room = null;
     if (roomId) {
-      room = this.db.prepare('SELECT * FROM rooms WHERE id = ?').get(roomId);
+      room = await this.db.get('SELECT * FROM rooms WHERE id = ?', roomId);
       if (!room) return { room_id: 'Room does not exist' };
       if (current('property_id') !== room.property_id) {
         if (explicit('property_id')) errors.room_id = 'Room is not in the selected property';
@@ -222,22 +223,26 @@ class Store {
   }
 
   // A bed can have only one active tenant and one active agreement at a time.
-  occupancyErrors(resourceName, row, existing) {
+  async occupancyErrors(resourceName, row, existing) {
     if (!row.bed_id || row.status !== 'Active') return {};
     const selfId = existing ? existing.id : -1;
     if (resourceName === 'tenants') {
-      const other = this.db
-        .prepare("SELECT full_name FROM tenants WHERE bed_id = ? AND status = 'Active' AND id != ?")
-        .get(row.bed_id, selfId);
+      const other = await this.db.get(
+        "SELECT full_name FROM tenants WHERE bed_id = ? AND status = 'Active' AND id != ?",
+        row.bed_id,
+        selfId,
+      );
       if (other) return { bed_id: `Bed is already occupied by ${other.full_name}` };
     }
     if (resourceName === 'agreements' && row.start_date && row.end_date) {
-      const other = this.db
-        .prepare(
-          `SELECT a.start_date, a.end_date, tn.full_name FROM agreements a JOIN tenants tn ON tn.id = a.tenant_id
-           WHERE a.bed_id = ? AND a.status = 'Active' AND a.id != ? AND a.start_date <= ? AND a.end_date >= ?`,
-        )
-        .get(row.bed_id, selfId, row.end_date, row.start_date);
+      const other = await this.db.get(
+        `SELECT a.start_date, a.end_date, tn.full_name FROM agreements a JOIN tenants tn ON tn.id = a.tenant_id
+         WHERE a.bed_id = ? AND a.status = 'Active' AND a.id != ? AND a.start_date <= ? AND a.end_date >= ?`,
+        row.bed_id,
+        selfId,
+        row.end_date,
+        row.start_date,
+      );
       if (other) {
         return { bed_id: `Bed already has an active agreement with ${other.full_name} (${other.start_date} to ${other.end_date})` };
       }
@@ -246,42 +251,38 @@ class Store {
   }
 
   // Side effects after a successful insert or update, run in the same transaction.
-  afterSave(resourceName, row) {
+  async afterSave(resourceName, row) {
     if (resourceName === 'rooms') {
       // Create beds up to the room's bed count (never removes any).
-      const have = this.db.prepare('SELECT COUNT(*) AS n FROM beds WHERE room_id = ?').get(row.id).n;
-      const names = new Set(this.db.prepare('SELECT bed_label FROM beds WHERE room_id = ?').all(row.id).map((b) => b.bed_label));
-      const insert = this.db.prepare('INSERT INTO beds (room_id, bed_label, monthly_rent, status) VALUES (?, ?, ?, ?)');
-      for (let i = 1, added = have; added < (row.total_beds || 0); i++) {
+      const names = new Set((await this.db.all('SELECT bed_label FROM beds WHERE room_id = ?', row.id)).map((b) => b.bed_label));
+      for (let i = 1, added = names.size; added < (row.total_beds || 0); i++) {
         if (names.has(`Bed ${i}`)) continue;
-        insert.run(row.id, `Bed ${i}`, row.rent_per_bed ?? null, 'Available');
+        await this.db.run(
+          'INSERT INTO beds (room_id, bed_label, monthly_rent, status) VALUES (?, ?, ?, ?)',
+          row.id,
+          `Bed ${i}`,
+          row.rent_per_bed ?? null,
+          'Available',
+        );
         added++;
       }
     }
     if (resourceName === 'agreements' && row.status === 'Active' && (row.room_id || row.bed_id)) {
       // Keep the tenant's current room and bed in step with their active agreement.
-      const tenant = this.db.prepare('SELECT * FROM tenants WHERE id = ?').get(row.tenant_id);
+      const tenant = await this.db.get('SELECT * FROM tenants WHERE id = ?', row.tenant_id);
       const today = localToday();
       const current = row.start_date <= today && row.end_date >= today;
       if (tenant && (current || (!tenant.bed_id && !tenant.room_id))) {
-        const errors = this.occupancyErrors('tenants', { ...tenant, bed_id: row.bed_id }, tenant);
+        const errors = await this.occupancyErrors('tenants', { ...tenant, bed_id: row.bed_id }, tenant);
         if (Object.keys(errors).length) throw new HttpError(400, 'Validation failed', errors);
-        this.db
-          .prepare("UPDATE tenants SET property_id = ?, room_id = ?, bed_id = ?, updated_at = datetime('now') WHERE id = ?")
-          .run(row.property_id, row.room_id, row.bed_id, tenant.id);
+        await this.db.run(
+          `UPDATE tenants SET property_id = ?, room_id = ?, bed_id = ?, updated_at = ${this.db.dialect.now} WHERE id = ?`,
+          row.property_id,
+          row.room_id,
+          row.bed_id,
+          tenant.id,
+        );
       }
-    }
-  }
-
-  transaction(fn) {
-    this.db.exec('BEGIN');
-    try {
-      const result = fn();
-      this.db.exec('COMMIT');
-      return result;
-    } catch (err) {
-      this.db.exec('ROLLBACK');
-      throw err;
     }
   }
 
@@ -295,17 +296,18 @@ class Store {
     return `SELECT t.*${extra.length ? ', ' + extra.join(', ') : ''}${label} FROM ${resourceName} t`;
   }
 
-  list(resourceName, query = {}) {
+  async list(resourceName, query = {}) {
     const def = getResource(resourceName);
     const where = [];
     const params = [];
+    const like = this.db.dialect.like;
 
     const q = typeof query.q === 'string' ? query.q.trim() : '';
     if (q) {
       const searchable = def.fields.filter((f) => TEXT_TYPES.has(f.type) || f.type === 'date' || f.type === 'month');
-      const ors = searchable.map((f) => `t.${f.name} LIKE ?`);
+      const ors = searchable.map((f) => `t.${f.name} ${like} ?`);
       for (const f of def.fields.filter((x) => x.type === 'ref' && LABEL_SQL[x.ref])) {
-        ors.push(`${LABEL_SQL[f.ref](`t.${f.name}`)} LIKE ?`);
+        ors.push(`${LABEL_SQL[f.ref](`t.${f.name}`)} ${like} ?`);
       }
       if (ors.length) {
         where.push(`(${ors.join(' OR ')})`);
@@ -332,68 +334,67 @@ class Store {
 
     const limit = Math.min(Math.max(parseInt(query.limit, 10) || 500, 1), 5000);
     sql += ` LIMIT ${limit}`;
-    return this.db.prepare(sql).all(...params);
+    return this.db.all(sql, ...params);
   }
 
-  options(resourceName) {
+  async options(resourceName) {
     getResource(resourceName);
     const label = LABEL_SQL[resourceName] ? LABEL_SQL[resourceName]('t.id') : `'#' || t.id`;
     const extra = OPTION_SQL[resourceName] ? `, ${OPTION_SQL[resourceName]}` : '';
-    return this.db
-      .prepare(`SELECT t.id, ${label} AS label${extra} FROM ${resourceName} t ORDER BY label COLLATE NOCASE`)
-      .all();
+    return this.db.all(`SELECT t.id, ${label} AS label${extra} FROM ${resourceName} t ORDER BY ${this.db.dialect.lower(label)}`);
   }
 
-  get(resourceName, id) {
-    const row = this.db.prepare(`${this.selectSql(resourceName)} WHERE t.id = ?`).get(Number(id));
+  async get(resourceName, id) {
+    const row = await this.db.get(`${this.selectSql(resourceName)} WHERE t.id = ?`, Number(id));
     if (!row) throw new HttpError(404, `${getResource(resourceName).singular} not found`);
     return row;
   }
 
-  create(resourceName, input, extraColumns = {}) {
-    const values = { ...this.validate(resourceName, input, null), ...extraColumns };
+  async create(resourceName, input, extraColumns = {}) {
+    const values = { ...(await this.validate(resourceName, input, null)), ...extraColumns };
     const cols = Object.keys(values);
     const sql = cols.length
       ? `INSERT INTO ${resourceName} (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`
       : `INSERT INTO ${resourceName} DEFAULT VALUES`;
-    return this.transaction(() => {
-      const result = this.run(sql, cols.map((c) => values[c]));
-      const row = this.get(resourceName, result.lastInsertRowid);
-      this.afterSave(resourceName, row);
-      return this.get(resourceName, row.id);
-    });
-  }
-
-  update(resourceName, id, input, extraColumns = {}) {
-    const existing = this.get(resourceName, id);
-    const values = { ...this.validate(resourceName, input, existing), ...extraColumns };
-    const cols = Object.keys(values);
-    return this.transaction(() => {
-      if (cols.length) {
-        const sets = cols.map((c) => `${c} = ?`).join(', ');
-        this.run(`UPDATE ${resourceName} SET ${sets}, updated_at = datetime('now') WHERE id = ?`, [
-          ...cols.map((c) => values[c]),
-          existing.id,
-        ]);
-      }
-      const row = this.get(resourceName, id);
-      this.afterSave(resourceName, row);
+    return this.db.transaction(async () => {
+      const id = await this.write(() => this.db.insert(sql, ...cols.map((c) => values[c])));
+      await this.afterSave(resourceName, await this.get(resourceName, id));
       return this.get(resourceName, id);
     });
   }
 
-  remove(resourceName, id) {
-    const existing = this.get(resourceName, id);
-    this.run(`DELETE FROM ${resourceName} WHERE id = ?`, [existing.id]);
+  async update(resourceName, id, input, extraColumns = {}) {
+    const existing = await this.get(resourceName, id);
+    const values = { ...(await this.validate(resourceName, input, existing)), ...extraColumns };
+    const cols = Object.keys(values);
+    return this.db.transaction(async () => {
+      if (cols.length) {
+        const sets = cols.map((c) => `${c} = ?`).join(', ');
+        await this.write(() =>
+          this.db.run(
+            `UPDATE ${resourceName} SET ${sets}, updated_at = ${this.db.dialect.now} WHERE id = ?`,
+            ...cols.map((c) => values[c]),
+            existing.id,
+          ),
+        );
+      }
+      await this.afterSave(resourceName, await this.get(resourceName, id));
+      return this.get(resourceName, id);
+    });
+  }
+
+  async remove(resourceName, id) {
+    const existing = await this.get(resourceName, id);
+    await this.write(() => this.db.run(`DELETE FROM ${resourceName} WHERE id = ?`, existing.id));
     return existing;
   }
 
-  run(sql, params) {
+  // Turns a foreign key failure into a message the user can act on.
+  async write(fn) {
     try {
-      return this.db.prepare(sql).run(...params);
+      return await fn();
     } catch (err) {
-      const msg = String(err.message);
-      if (msg.includes('FOREIGN KEY')) {
+      if (this.db.dialect.isForeignKeyError(err)) {
         throw new HttpError(409, 'This record is linked to other records (or links to one that does not exist).');
       }
       throw err;

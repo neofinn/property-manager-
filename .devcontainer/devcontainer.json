@@ -1,10 +1,17 @@
 {
   "name": "Property Manager (beta)",
   "image": "mcr.microsoft.com/devcontainers/javascript-node:1-22-bookworm",
-  "hostRequirements": { "cpus": 2 },
-  "forwardPorts": [3000],
+  "hostRequirements": {
+    "cpus": 2
+  },
+  "forwardPorts": [
+    3000
+  ],
   "portsAttributes": {
-    "3000": { "label": "Property Manager", "onAutoForward": "openBrowser" }
+    "3000": {
+      "label": "Property Manager",
+      "onAutoForward": "openBrowser"
+    }
   },
   "containerEnv": {
     "HOST": "0.0.0.0",
@@ -14,6 +21,11 @@
   },
   "postStartCommand": "bash .devcontainer/start.sh",
   "customizations": {
-    "codespaces": { "openFiles": ["README.md"] }
-  }
+    "codespaces": {
+      "openFiles": [
+        "README.md"
+      ]
+    }
+  },
+  "postCreateCommand": "npm ci"
 }

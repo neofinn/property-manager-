@@ -7,14 +7,19 @@
 const path = require('node:path');
 const { createApp } = require('../src/app');
 
-const app = createApp({ dataDir: process.env.DATA_DIR || path.join(__dirname, '..', 'data') });
+const app = createApp({ dataDir: process.env.DATA_DIR || path.join(__dirname, '..', 'data'), databaseUrl: process.env.DATABASE_URL || '' });
 const phone = process.env.DEMO_PHONE || '9999999999';
 const password = process.env.DEMO_PASSWORD || 'demo12345';
 
-try {
-  const result = app.createDemoAccount({ phone, password, company_name: 'Demo Properties', manager_name: 'Demo Manager' });
-  console.log(result.created ? 'Demo account created with sample data.' : 'Demo account already exists.');
-  console.log(`Log in with phone ${phone} and password ${password}`);
-} finally {
-  app.close();
-}
+(async () => {
+  try {
+    const result = await app.createDemoAccount({ phone, password, company_name: 'Demo Properties', manager_name: 'Demo Manager' });
+    console.log(result.created ? 'Demo account created with sample data.' : 'Demo account already exists.');
+    console.log(`Log in with phone ${phone} and password ${password}`);
+  } finally {
+    await app.close();
+  }
+})().catch((err) => {
+  console.error(err.message);
+  process.exit(1);
+});

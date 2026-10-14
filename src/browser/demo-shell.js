@@ -96,7 +96,7 @@ async function boot() {
 
   const tokenKey = `pm-demo-token:${uid || 'guest'}`;
   let memoryToken = null;
-  const backend = createBackend({
+  const backend = await createBackend({
     SQL,
     bytes,
     currency: 'INR',
@@ -240,7 +240,7 @@ async function boot() {
 
   $('#demo-splash').hidden = true;
   const me = await backend.request('GET', '/api/auth/me');
-  window.PM_NAVIGATE(me.status === 200 ? '/' : backend.hasAccount() ? '/login' : '/signup');
+  window.PM_NAVIGATE(me.status === 200 ? '/' : (await backend.hasAccount()) ? '/login' : '/signup');
 }
 
 boot().catch((err) => {

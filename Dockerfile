@@ -7,12 +7,15 @@ ENV NODE_ENV=production \
     PORT=3000 \
     DATA_DIR=/data
 
-COPY package.json server.js ./
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev && npm cache clean --force
+COPY server.js ./
 COPY src ./src
 COPY public ./public
 COPY scripts ./scripts
 
-# All accounts, CRM data and uploaded documents live in /data: mount a volume here.
+# Without DATABASE_URL, accounts, CRM data and documents live in /data: mount a volume here.
+# With DATABASE_URL (Supabase/Postgres) everything is in the database and /data stays empty.
 RUN mkdir -p /data && chown node:node /data
 USER node
 VOLUME ["/data"]

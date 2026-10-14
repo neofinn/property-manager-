@@ -1,94 +1,87 @@
 'use strict';
 
-const { resources } = require('./schema');
+// Creates and migrates one company's CRM tables on any backend in
+// src/database (SQLite file, sql.js in the browser, or a Postgres schema).
 
-const SQL_TYPES = {
-  number: 'INTEGER',
-  money: 'REAL',
-  bool: 'INTEGER',
-  ref: 'INTEGER',
-};
+const { resources } = require('./schema');
 
 // A `file` field is stored as four columns.
 const FILE_COLUMNS = ['name', 'stored', 'mime', 'size'];
 
-function columnsFor(field) {
+function columnsFor(field, dialect) {
   if (field.type === 'file') {
     return FILE_COLUMNS.map((suffix) => ({
       name: `${field.name}_${suffix}`,
       sql: `${field.name}_${suffix} ${suffix === 'size' ? 'INTEGER' : 'TEXT'}`,
     }));
   }
-  let sql = `${field.name} ${SQL_TYPES[field.type] || 'TEXT'}`;
+  const type = { number: 'INTEGER', money: dialect.money, bool: 'INTEGER', ref: 'BIGINT' }[field.type] || 'TEXT';
+  let sql = `${field.name} ${type}`;
   if (field.required) sql += ' NOT NULL';
-  if (field.type === 'ref') {
-    sql += ` REFERENCES ${field.ref}(id) ON DELETE ${field.onDelete || 'SET NULL'}`;
-  }
+  if (field.type === 'ref') sql += ` REFERENCES ${field.ref}(id) ON DELETE ${field.onDelete || 'SET NULL'}`;
   return [{ name: field.name, sql }];
 }
 
-function createTableSql(name, def) {
-  const cols = ['id INTEGER PRIMARY KEY AUTOINCREMENT'];
-  for (const field of def.fields) {
-    for (const col of columnsFor(field)) cols.push(col.sql);
-  }
-  cols.push("created_at TEXT NOT NULL DEFAULT (datetime('now'))");
-  cols.push("updated_at TEXT NOT NULL DEFAULT (datetime('now'))");
+function createTableSql(name, def, dialect) {
+  const cols = [dialect.idColumn];
+  for (const field of def.fields) for (const col of columnsFor(field, dialect)) cols.push(col.sql);
+  cols.push(`created_at TEXT NOT NULL DEFAULT (${dialect.now})`);
+  cols.push(`updated_at TEXT NOT NULL DEFAULT (${dialect.now})`);
   return `CREATE TABLE IF NOT EXISTS ${name} (\n  ${cols.join(',\n  ')}\n)`;
 }
 
-// Opens (creating if needed) a company's database file in `dataDir`.
-function open(dataDir) {
-  // Required here so the browser demo can bundle initSchema without Node modules.
-  const fs = require('node:fs');
-  const path = require('node:path');
-  const { DatabaseSync } = require('node:sqlite');
-  const inMemory = dataDir === ':memory:';
-  if (!inMemory) fs.mkdirSync(path.join(dataDir, 'uploads'), { recursive: true });
-  const db = new DatabaseSync(inMemory ? ':memory:' : path.join(dataDir, 'crm.sqlite'));
-  if (!inMemory) db.exec('PRAGMA journal_mode = WAL');
-  return initSchema(db);
+// Postgres needs a referenced table to exist first.
+function tablesInDependencyOrder() {
+  const order = [];
+  const visit = (name, seen = new Set()) => {
+    if (order.includes(name) || seen.has(name)) return;
+    seen.add(name);
+    for (const f of resources[name].fields) if (f.type === 'ref' && f.ref !== name) visit(f.ref, seen);
+    order.push(name);
+  };
+  Object.keys(resources).forEach((name) => visit(name));
+  return order;
 }
 
-// Creates and migrates the CRM tables. Works with node:sqlite and with the
-// sql.js adapter used by the browser demo.
-function initSchema(db) {
-  db.exec('PRAGMA foreign_keys = ON');
-  for (const [name, def] of Object.entries(resources)) {
-    db.exec(createTableSql(name, def));
+async function initSchema(db) {
+  const { dialect } = db;
+  for (const name of tablesInDependencyOrder()) {
+    const def = resources[name];
+    await db.exec(createTableSql(name, def, dialect));
     // Add columns introduced after the table was first created.
-    const existing = new Set(db.prepare(`PRAGMA table_info(${name})`).all().map((c) => c.name));
+    const q = dialect.columnsSql(name);
+    const existing = new Set((await db.all(q.sql, ...q.params)).map((c) => c.name));
     for (const field of def.fields) {
-      for (const col of columnsFor(field)) {
+      for (const col of columnsFor(field, dialect)) {
         if (!existing.has(col.name)) {
-          // SQLite cannot add NOT NULL columns without a default, so relax it.
-          db.exec(`ALTER TABLE ${name} ADD COLUMN ${col.sql.replace(' NOT NULL', '')}`);
+          // A NOT NULL column can't be added to a table that has rows, so relax it.
+          await db.exec(`ALTER TABLE ${name} ADD COLUMN ${col.sql.replace(' NOT NULL', '')}`);
         }
       }
     }
   }
 
   // Data migrations for renamed options.
-  db.exec("UPDATE properties SET type = 'PG / Hostel' WHERE type = 'PG'");
-  const cols = new Set(db.prepare('PRAGMA table_info(properties)').all().map((c) => c.name));
-  if (cols.has('food_included')) {
-    db.exec("UPDATE properties SET meals = 'All 3 meals' WHERE food_included = 1 AND meals IS NULL");
+  await db.run("UPDATE properties SET type = 'PG / Hostel' WHERE type = 'PG'");
+  const q = dialect.columnsSql('properties');
+  if ((await db.all(q.sql, ...q.params)).some((c) => c.name === 'food_included')) {
+    await db.run("UPDATE properties SET meals = 'All 3 meals' WHERE food_included = 1 AND meals IS NULL");
   }
 
-  db.exec(`
+  await db.exec(`
     CREATE TABLE IF NOT EXISTS reminder_log (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ${dialect.idColumn},
       reminder_key TEXT NOT NULL,
       channel TEXT NOT NULL,
-      sent_at TEXT NOT NULL DEFAULT (datetime('now'))
+      sent_at TEXT NOT NULL DEFAULT (${dialect.now})
     );
+    CREATE TABLE IF NOT EXISTS files (stored TEXT PRIMARY KEY, data ${dialect.blob} NOT NULL);
     CREATE INDEX IF NOT EXISTS reminder_log_key ON reminder_log(reminder_key);
     CREATE INDEX IF NOT EXISTS rent_payments_agreement ON rent_payments(agreement_id, period);
     CREATE INDEX IF NOT EXISTS bills_due ON bills(status, due_date);
     CREATE INDEX IF NOT EXISTS schedules_start ON schedules(starts_at);
   `);
-
   return db;
 }
 
-module.exports = { open, initSchema, columnsFor, FILE_COLUMNS };
+module.exports = { initSchema, columnsFor, FILE_COLUMNS };

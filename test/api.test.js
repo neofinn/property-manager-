@@ -7,6 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 const http = require('node:http');
 const { createApp } = require('../src/app');
+const { createTestDatabase } = require('./helpers');
 const { dueDateFor } = require('../src/reminders');
 
 let server;
@@ -14,10 +15,14 @@ let base;
 let app;
 let dataDir;
 let cookie = '';
+let testDb;
 
 before(async () => {
   dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pm-test-'));
-  app = createApp({ dataDir });
+  // With TEST_DATABASE_URL set, the suite runs against a fresh Postgres database.
+  testDb = await createTestDatabase();
+  app = createApp({ dataDir, databaseUrl: testDb.url, adminPassword: 'admin-secret-1' });
+  await app.ready;
   server = http.createServer(app);
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   base = `http://127.0.0.1:${server.address().port}`;
@@ -26,9 +31,10 @@ before(async () => {
   cookie = res.headers.get('set-cookie').split(';')[0];
 });
 
-after(() => {
+after(async () => {
   server.close();
-  app.close();
+  await app.close();
+  await testDb.drop();
   fs.rmSync(dataDir, { recursive: true, force: true });
 });
 
@@ -162,10 +168,10 @@ test('document upload, download, verification and cleanup', async () => {
   rem = (await call('GET', '/api/reminders')).body;
   assert.ok(!rem.documents_unverified.some((d) => d.document_id === doc.id));
 
-  const uploads = path.join(dataDir, 'companies', '1', 'uploads');
-  const before = fs.readdirSync(uploads).length;
+  const storedFiles = () => app.platform.withTenant(1, async (db) => (await db.get('SELECT COUNT(*) AS n FROM files')).n);
+  const before = await storedFiles();
   await call('DELETE', `/api/documents/${doc.id}`);
-  assert.equal(fs.readdirSync(uploads).length, before - 1);
+  assert.equal(await storedFiles(), before - 1);
 });
 
 test('CSV export neutralises formulas', async () => {
@@ -246,12 +252,14 @@ test('each company only sees its own data; sample data and feedback', async () =
   assert.equal((await call('POST', '/api/sample-data', null, { auth: other })).status, 409, 'only into an empty account');
 
   assert.equal((await call('POST', '/api/feedback', { message: 'Love the bed board', page: '#/bedboard' }, { auth: other })).status, 201);
-  assert.equal(app.accounts.listFeedback()[0].company_name, 'Second Co');
+  assert.equal((await app.platform.listFeedback())[0].company_name, 'Second Co');
 });
 
 test('invite code is required when configured', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pm-invite-'));
-  const invited = createApp({ dataDir: dir, inviteCode: 'BETA2026' });
+  const invitedDb = await createTestDatabase();
+  const invited = createApp({ dataDir: dir, inviteCode: 'BETA2026', databaseUrl: invitedDb.url });
+  await invited.ready;
   const srv = http.createServer(invited);
   await new Promise((resolve) => srv.listen(0, '127.0.0.1', resolve));
   const url = `http://127.0.0.1:${srv.address().port}/api/auth/signup`;
@@ -264,7 +272,8 @@ test('invite code is required when configured', async () => {
     assert.equal((await post({ ...input, invite_code: 'BETA2026' })).status, 201);
   } finally {
     srv.close();
-    invited.close();
+    await invited.close();
+    await invitedDb.drop();
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });

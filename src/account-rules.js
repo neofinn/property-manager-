@@ -1,6 +1,6 @@
 'use strict';
 
-// Sign-up validation shared by the server (src/accounts.js) and the browser demo.
+// Sign-up validation shared by the server (src/platform.js) and the browser demo.
 
 // "+91 98765-43210" -> "+919876543210". A bare 10-digit number gets the default country code.
 function normalizePhone(raw, defaultCountryCode) {

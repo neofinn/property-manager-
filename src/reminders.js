@@ -75,28 +75,28 @@ function dueDateFor(agreement, period) {
   return due;
 }
 
-function rentReminders(db, today, horizon, money) {
-  const agreements = db
-    .prepare(
-      `SELECT a.*, tn.full_name AS tenant_name, tn.phone AS tenant_phone, tn.email AS tenant_email,
-              p.name AS property_name,
-              (SELECT room_number FROM rooms WHERE id = a.room_id) AS room_number,
-              (SELECT bed_label FROM beds WHERE id = a.bed_id) AS bed_label
-       FROM agreements a
-       JOIN tenants tn ON tn.id = a.tenant_id
-       JOIN properties p ON p.id = a.property_id
-       WHERE a.status = 'Active'`,
-    )
-    .all();
-  const paidStmt = db.prepare(
-    'SELECT period, SUM(amount) AS paid FROM rent_payments WHERE agreement_id = ? GROUP BY period',
+async function rentReminders(db, today, horizon, money) {
+  const agreements = await db.all(
+    `SELECT a.*, tn.full_name AS tenant_name, tn.phone AS tenant_phone, tn.email AS tenant_email,
+            p.name AS property_name,
+            (SELECT room_number FROM rooms WHERE id = a.room_id) AS room_number,
+            (SELECT bed_label FROM beds WHERE id = a.bed_id) AS bed_label
+     FROM agreements a
+     JOIN tenants tn ON tn.id = a.tenant_id
+     JOIN properties p ON p.id = a.property_id
+     WHERE a.status = 'Active'`,
   );
+  const paidRows = await db.all(
+    `SELECT agreement_id, period, SUM(amount) AS paid FROM rent_payments
+     WHERE agreement_id IN (SELECT id FROM agreements WHERE status = 'Active')
+     GROUP BY agreement_id, period`,
+  );
+  const paidBy = new Map(paidRows.map((r) => [`${r.agreement_id}|${r.period}`, r.paid]));
   const lastDate = addDays(today, horizon);
   const items = [];
 
   for (const a of agreements) {
     a.property_name = placeName(a);
-    const paid = new Map(paidStmt.all(a.id).map((r) => [r.period, r.paid]));
     let period = a.start_date.slice(0, 7);
     const earliest = addMonths(today.slice(0, 7), -(MAX_RENT_LOOKBACK_MONTHS - 1));
     if (period < earliest) period = earliest;
@@ -105,7 +105,7 @@ function rentReminders(db, today, horizon, money) {
     for (; period <= lastPeriod; period = addMonths(period, 1)) {
       const due = dueDateFor(a, period);
       if (!due || due > lastDate) continue;
-      const paidAmount = paid.get(period) || 0;
+      const paidAmount = paidBy.get(`${a.id}|${period}`) || 0;
       const outstanding = Math.round((a.monthly_rent - paidAmount) * 100) / 100;
       if (outstanding <= 0) continue;
 
@@ -146,118 +146,114 @@ function rentReminders(db, today, horizon, money) {
   return items.sort((x, y) => x.due_date.localeCompare(y.due_date));
 }
 
-function billReminders(db, today, horizon) {
-  return db
-    .prepare(
-      `SELECT b.*, p.name AS property_name FROM bills b JOIN properties p ON p.id = b.property_id
-       WHERE b.status = 'Unpaid' AND b.due_date <= ? ORDER BY b.due_date`,
-    )
-    .all(addDays(today, horizon))
-    .map((b) => {
-      const daysLate = daysBetween(b.due_date, today);
-      return {
-        key: `bill:${b.id}`,
-        type: 'bill',
-        state: daysLate > 0 ? 'overdue' : daysLate === 0 ? 'due_today' : 'upcoming',
-        bill_id: b.id,
-        property_id: b.property_id,
-        property_name: b.property_name,
-        category: b.category,
-        provider: b.provider,
-        payer: b.payer,
-        amount: b.amount,
-        due_date: b.due_date,
-        days_overdue: Math.max(daysLate, 0),
-      };
-    });
+async function billReminders(db, today, horizon) {
+  const rows = await db.all(
+    `SELECT b.*, p.name AS property_name FROM bills b JOIN properties p ON p.id = b.property_id
+     WHERE b.status = 'Unpaid' AND b.due_date <= ? ORDER BY b.due_date`,
+    addDays(today, horizon),
+  );
+  return rows.map((b) => {
+    const daysLate = daysBetween(b.due_date, today);
+    return {
+      key: `bill:${b.id}`,
+      type: 'bill',
+      state: daysLate > 0 ? 'overdue' : daysLate === 0 ? 'due_today' : 'upcoming',
+      bill_id: b.id,
+      property_id: b.property_id,
+      property_name: b.property_name,
+      category: b.category,
+      provider: b.provider,
+      payer: b.payer,
+      amount: b.amount,
+      due_date: b.due_date,
+      days_overdue: Math.max(daysLate, 0),
+    };
+  });
 }
 
-function agreementReminders(db, today, money, windowDays = 60) {
-  return db
-    .prepare(
-      `SELECT a.*, tn.full_name AS tenant_name, tn.phone AS tenant_phone, tn.email AS tenant_email,
-              p.name AS property_name,
-              (SELECT room_number FROM rooms WHERE id = a.room_id) AS room_number,
-              (SELECT bed_label FROM beds WHERE id = a.bed_id) AS bed_label
-       FROM agreements a JOIN tenants tn ON tn.id = a.tenant_id JOIN properties p ON p.id = a.property_id
-       WHERE a.status = 'Active' AND a.end_date <= ? ORDER BY a.end_date`,
-    )
-    .all(addDays(today, windowDays))
-    .map((a) => {
-      a.property_name = placeName(a);
-      const daysLeft = daysBetween(today, a.end_date);
-      const message =
-        daysLeft < 0
-          ? `Hi ${a.tenant_name}, your rent agreement for ${a.property_name} ended on ${a.end_date}. Please get in touch to renew it.`
-          : `Hi ${a.tenant_name}, your rent agreement for ${a.property_name} ends on ${a.end_date}. Please let us know whether you would like to renew (current rent ${money(a.monthly_rent)}).`;
-      return {
-        key: `agreement:${a.id}:${a.end_date}`,
-        type: 'agreement',
-        state: daysLeft < 0 ? 'expired' : 'expiring',
-        agreement_id: a.id,
-        tenant_id: a.tenant_id,
-        property_id: a.property_id,
-        tenant_name: a.tenant_name,
-        tenant_phone: a.tenant_phone,
-        property_name: a.property_name,
-        end_date: a.end_date,
-        days_left: daysLeft,
-        message,
-        links: contactLinks(a.tenant_phone, a.tenant_email, 'Rent agreement renewal', message),
-      };
-    });
+async function agreementReminders(db, today, money, windowDays = 60) {
+  const rows = await db.all(
+    `SELECT a.*, tn.full_name AS tenant_name, tn.phone AS tenant_phone, tn.email AS tenant_email,
+            p.name AS property_name,
+            (SELECT room_number FROM rooms WHERE id = a.room_id) AS room_number,
+            (SELECT bed_label FROM beds WHERE id = a.bed_id) AS bed_label
+     FROM agreements a JOIN tenants tn ON tn.id = a.tenant_id JOIN properties p ON p.id = a.property_id
+     WHERE a.status = 'Active' AND a.end_date <= ? ORDER BY a.end_date`,
+    addDays(today, windowDays),
+  );
+  return rows.map((a) => {
+    a.property_name = placeName(a);
+    const daysLeft = daysBetween(today, a.end_date);
+    const message =
+      daysLeft < 0
+        ? `Hi ${a.tenant_name}, your rent agreement for ${a.property_name} ended on ${a.end_date}. Please get in touch to renew it.`
+        : `Hi ${a.tenant_name}, your rent agreement for ${a.property_name} ends on ${a.end_date}. Please let us know whether you would like to renew (current rent ${money(a.monthly_rent)}).`;
+    return {
+      key: `agreement:${a.id}:${a.end_date}`,
+      type: 'agreement',
+      state: daysLeft < 0 ? 'expired' : 'expiring',
+      agreement_id: a.id,
+      tenant_id: a.tenant_id,
+      property_id: a.property_id,
+      tenant_name: a.tenant_name,
+      tenant_phone: a.tenant_phone,
+      property_name: a.property_name,
+      end_date: a.end_date,
+      days_left: daysLeft,
+      message,
+      links: contactLinks(a.tenant_phone, a.tenant_email, 'Rent agreement renewal', message),
+    };
+  });
 }
 
-function documentReminders(db, today, windowDays = 30) {
+async function documentReminders(db, today, windowDays = 30) {
   const label =
     `COALESCE((SELECT full_name FROM tenants WHERE id = d.tenant_id), ` +
     `(SELECT name FROM properties WHERE id = d.property_id))`;
-  const expiring = db
-    .prepare(
+  const expiring = (
+    await db.all(
       `SELECT d.id, d.title, d.doc_type, d.expires_on, ${label} AS related
        FROM documents d WHERE d.expires_on IS NOT NULL AND d.expires_on <= ? ORDER BY d.expires_on`,
+      addDays(today, windowDays),
     )
-    .all(addDays(today, windowDays))
-    .map((d) => ({
-      key: `document:${d.id}:expiry`,
-      type: 'document_expiry',
-      state: d.expires_on < today ? 'expired' : 'expiring',
-      document_id: d.id,
-      title: d.title,
-      doc_type: d.doc_type,
-      related: d.related,
-      expires_on: d.expires_on,
-      days_left: daysBetween(today, d.expires_on),
-    }));
-  const unverified = db
-    .prepare(
+  ).map((d) => ({
+    key: `document:${d.id}:expiry`,
+    type: 'document_expiry',
+    state: d.expires_on < today ? 'expired' : 'expiring',
+    document_id: d.id,
+    title: d.title,
+    doc_type: d.doc_type,
+    related: d.related,
+    expires_on: d.expires_on,
+    days_left: daysBetween(today, d.expires_on),
+  }));
+  const unverified = (
+    await db.all(
       `SELECT d.id, d.title, d.doc_type, d.created_at, ${label} AS related
        FROM documents d WHERE COALESCE(d.verified, 0) = 0 ORDER BY d.created_at`,
     )
-    .all()
-    .map((d) => ({
-      key: `document:${d.id}:verify`,
-      type: 'document_unverified',
-      state: 'pending',
-      document_id: d.id,
-      title: d.title,
-      doc_type: d.doc_type,
-      related: d.related,
-    }));
+  ).map((d) => ({
+    key: `document:${d.id}:verify`,
+    type: 'document_unverified',
+    state: 'pending',
+    document_id: d.id,
+    title: d.title,
+    doc_type: d.doc_type,
+    related: d.related,
+  }));
   return { expiring, unverified };
 }
 
-function scheduleReminders(db, today, horizon) {
-  const rows = db
-    .prepare(
-      `SELECT s.*, (SELECT name FROM properties WHERE id = s.property_id) AS property_name,
-              (SELECT full_name FROM tenants WHERE id = s.tenant_id) AS tenant_name,
-              (SELECT name FROM contacts WHERE id = s.contact_id) AS contact_name,
-              (SELECT phone FROM contacts WHERE id = s.contact_id) AS contact_phone
-       FROM schedules s
-       WHERE s.status = 'Scheduled' AND s.starts_at < ? ORDER BY s.starts_at`,
-    )
-    .all(`${addDays(today, horizon + 1)}T00:00`);
+async function scheduleReminders(db, today, horizon) {
+  const rows = await db.all(
+    `SELECT s.*, (SELECT name FROM properties WHERE id = s.property_id) AS property_name,
+            (SELECT full_name FROM tenants WHERE id = s.tenant_id) AS tenant_name,
+            (SELECT name FROM contacts WHERE id = s.contact_id) AS contact_name,
+            (SELECT phone FROM contacts WHERE id = s.contact_id) AS contact_phone
+     FROM schedules s
+     WHERE s.status = 'Scheduled' AND s.starts_at < ? ORDER BY s.starts_at`,
+    `${addDays(today, horizon + 1)}T00:00`,
+  );
   return rows.map((s) => ({
     key: `schedule:${s.id}`,
     type: 'schedule',
@@ -274,82 +270,86 @@ function scheduleReminders(db, today, horizon) {
   }));
 }
 
-function attachLastReminded(db, items) {
-  const stmt = db.prepare(
-    'SELECT channel, sent_at FROM reminder_log WHERE reminder_key = ? ORDER BY id DESC LIMIT 1',
-  );
-  for (const item of items) {
-    const last = stmt.get(item.key);
-    item.last_reminded = last ? { channel: last.channel, sent_at: last.sent_at } : null;
+async function attachLastReminded(db, items) {
+  const last = new Map();
+  for (let i = 0; i < items.length; i += 200) {
+    const keys = items.slice(i, i + 200).map((item) => item.key);
+    const rows = await db.all(
+      `SELECT reminder_key, channel, sent_at FROM reminder_log
+       WHERE reminder_key IN (${keys.map(() => '?').join(', ')}) ORDER BY id`,
+      ...keys,
+    );
+    for (const r of rows) last.set(r.reminder_key, { channel: r.channel, sent_at: r.sent_at });
   }
+  for (const item of items) item.last_reminded = last.get(item.key) || null;
   return items;
 }
 
-function computeReminders(db, { today = localToday(), horizon = 7, currency = 'INR' } = {}) {
+async function computeReminders(db, { today = localToday(), horizon = 7, currency = 'INR' } = {}) {
   const money = makeMoney(currency);
-  const rent = attachLastReminded(db, rentReminders(db, today, horizon, money));
-  const agreements = attachLastReminded(db, agreementReminders(db, today, money));
-  const docs = documentReminders(db, today);
+  const rent = await attachLastReminded(db, await rentReminders(db, today, horizon, money));
+  const agreements = await attachLastReminded(db, await agreementReminders(db, today, money));
+  const docs = await documentReminders(db, today);
   return {
     today,
     horizon,
     rent,
-    bills: billReminders(db, today, horizon),
+    bills: await billReminders(db, today, horizon),
     agreements,
     documents_expiring: docs.expiring,
     documents_unverified: docs.unverified,
-    schedules: scheduleReminders(db, today, horizon),
+    schedules: await scheduleReminders(db, today, horizon),
   };
 }
 
-function computeDashboard(db, { today = localToday(), horizon = 7, currency = 'INR' } = {}) {
-  const count = (table, where = '') => db.prepare(`SELECT COUNT(*) AS n FROM ${table} ${where}`).get().n;
+async function computeDashboard(db, { today = localToday(), horizon = 7, currency = 'INR' } = {}) {
+  const count = async (table, where = '') => (await db.get(`SELECT COUNT(*) AS n FROM ${table} ${where}`)).n;
   const period = today.slice(0, 7);
-  const occupied = db
-    .prepare(
+  const occupied = (
+    await db.get(
       `SELECT COUNT(DISTINCT property_id) AS n FROM agreements
        WHERE status = 'Active' AND start_date <= ? AND end_date >= ?`,
+      today,
+      today,
     )
-    .get(today, today).n;
-  const expected = db
-    .prepare(
+  ).n;
+  const expected = (
+    await db.get(
       `SELECT COALESCE(SUM(monthly_rent), 0) AS s FROM agreements
        WHERE status = 'Active' AND substr(start_date, 1, 7) <= ? AND substr(end_date, 1, 7) >= ?`,
+      period,
+      period,
     )
-    .get(period, period).s;
-  const collected = db
-    .prepare('SELECT COALESCE(SUM(amount), 0) AS s FROM rent_payments WHERE period = ?')
-    .get(period).s;
-  const reminders = computeReminders(db, { today, horizon, currency });
-  const beds = db
-    .prepare(
-      `SELECT COUNT(*) AS total,
-              SUM(EXISTS (SELECT 1 FROM tenants x WHERE x.bed_id = b.id AND x.status = 'Active')) AS occupied
-       FROM beds b`,
-    )
-    .get();
+  ).s;
+  const collected = (await db.get('SELECT COALESCE(SUM(amount), 0) AS s FROM rent_payments WHERE period = ?', period)).s;
+  const reminders = await computeReminders(db, { today, horizon, currency });
+  const beds = await db.get(
+    `SELECT COUNT(*) AS total,
+            SUM(CASE WHEN EXISTS (SELECT 1 FROM tenants x WHERE x.bed_id = b.id AND x.status = 'Active') THEN 1 ELSE 0 END) AS occupied
+     FROM beds b`,
+  );
   const overdueRent = reminders.rent.filter((r) => r.state === 'overdue');
 
   return {
     today,
     period,
     counts: {
-      properties: count('properties'),
-      tenants: count('tenants', "WHERE status = 'Active'"),
-      agreements: count('agreements', "WHERE status = 'Active'"),
-      contacts: count('contacts'),
-      documents: count('documents'),
-      unpaid_bills: count('bills', "WHERE status = 'Unpaid'"),
+      properties: await count('properties'),
+      tenants: await count('tenants', "WHERE status = 'Active'"),
+      agreements: await count('agreements', "WHERE status = 'Active'"),
+      contacts: await count('contacts'),
+      documents: await count('documents'),
+      unpaid_bills: await count('bills', "WHERE status = 'Unpaid'"),
     },
-    occupancy: { occupied, total: count('properties') },
-    beds: { total: beds.total, occupied: beds.occupied || 0, rooms: count('rooms') },
+    occupancy: { occupied, total: await count('properties') },
+    beds: { total: beds.total, occupied: beds.occupied || 0, rooms: await count('rooms') },
     rent: {
       expected_this_month: expected,
       collected_this_month: collected,
       overdue_total: Math.round(overdueRent.reduce((s, r) => s + r.outstanding, 0) * 100) / 100,
       overdue_count: overdueRent.length,
     },
-    bills_unpaid_total: db.prepare("SELECT COALESCE(SUM(amount), 0) AS s FROM bills WHERE status = 'Unpaid'").get().s,
+    bills_unpaid_total: (await db.get("SELECT COALESCE(SUM(amount), 0) AS s FROM bills WHERE status = 'Unpaid'")).s,
     reminders,
   };
 }

@@ -421,3 +421,32 @@ main > .form-error { margin: 0; }
 .confirm-dialog { width: min(420px, calc(100vw - 32px)); }
 .confirm-dialog p { margin: 0; padding: 20px 20px 4px; }
 .btn.danger-solid { background: var(--bad); border-color: var(--bad); color: var(--surface); }
+
+/* Platform notice (set from /admin) */
+.notice-banner { margin: 0; padding: 8px 16px; background: var(--warn-bg); color: var(--warn); font-size: 13px; text-align: center; }
+
+/* Developer admin */
+.admin-tabs { display: flex; gap: 4px; padding-inline: 16px; padding-block: 8px; border-bottom: 1px solid var(--border); background: var(--surface); overflow-x: auto; }
+.admin-tabs a { padding: 6px 12px; border-radius: 8px; color: var(--muted); text-decoration: none; font-weight: 600; white-space: nowrap; }
+.admin-tabs a.active { background: var(--accent-soft); color: var(--accent); }
+.admin-main { max-width: 1200px; margin: 0 auto; padding-inline: 16px; padding-block: 20px 48px; display: flex; flex-direction: column; gap: 16px; outline: none; }
+.admin-main .page-head { margin-bottom: 0; }
+.admin-main .stats { margin-bottom: 0; }
+.admin .stat { cursor: default; }
+.chart-wrap { overflow-x: auto; }
+.chart { display: block; max-width: none; }
+.chart .grid { stroke: var(--border); stroke-width: 1; }
+.chart .baseline { stroke: var(--muted); stroke-width: 1; }
+.chart .axis { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.chart .bar { fill: var(--accent); }
+.chart .bar-hit:hover .bar { fill: var(--text); }
+.chart-tip { position: absolute; z-index: 50; padding: 4px 8px; border-radius: 6px; background: var(--text); color: var(--bg); font-size: 12px; pointer-events: none; white-space: nowrap; }
+.table-toggle { margin-top: 10px; }
+.table-toggle summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.admin-table tbody tr { cursor: default; }
+.admin-settings { display: flex; flex-direction: column; gap: 18px; max-width: 640px; }
+.switch { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; }
+.switch input { margin-top: 3px; }
+.feedback-text { margin: 4px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.rem-list li.resolved { opacity: 0.55; }
