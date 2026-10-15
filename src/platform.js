@@ -135,6 +135,13 @@ class Platform {
     await add('companies', 'status', "status TEXT NOT NULL DEFAULT 'active'");
     await add('companies', 'last_active_at', 'last_active_at TEXT');
     await add('feedback', 'resolved', 'resolved INTEGER NOT NULL DEFAULT 0');
+    if (this.storage === 'postgres') {
+      // Supabase serves the public schema through its web API. Row-level security
+      // with no policies refuses those requests; the app connects as the owner.
+      for (const table of ['companies', 'sessions', 'feedback', 'settings', 'admin_sessions', 'admin_log']) {
+        await this.db.exec(`ALTER TABLE ${table} ENABLE ROW LEVEL SECURITY`);
+      }
+    }
     return this;
   }
 
