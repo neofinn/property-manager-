@@ -1,6 +1,6 @@
 'use strict';
 
-const { resources } = require('./schema');
+const { resources, appliesTo } = require('./schema');
 const { localToday } = require('./reminders');
 
 class HttpError extends Error {
@@ -41,6 +41,7 @@ const COMPUTED_SQL = {
     room_count: '(SELECT COUNT(*) FROM rooms WHERE property_id = t.id)',
     bed_count: '(SELECT COUNT(*) FROM beds b JOIN rooms r ON r.id = b.room_id WHERE r.property_id = t.id)',
     occupied_beds: OCCUPIED_BEDS_SQL('b.room_id IN (SELECT id FROM rooms WHERE property_id = t.id)'),
+    tenant_count: "(SELECT COUNT(*) FROM tenants WHERE property_id = t.id AND status = 'Active')",
   },
   rooms: {
     bed_count: '(SELECT COUNT(*) FROM beds WHERE room_id = t.id)',
@@ -167,6 +168,20 @@ class Store {
       }
       if (value === undefined && !existing && field.default !== undefined) value = field.default;
       if (value !== undefined) values[field.name] = value;
+    }
+
+    if (resourceName === 'properties') {
+      // Clear fields that don't apply to the property type (e.g. bed fields on a villa).
+      const type = values.type !== undefined ? values.type : existing ? existing.type : null;
+      for (const field of def.fields) {
+        if (appliesTo(field, type) || errors[field.name]) continue;
+        if (values[field.name] !== undefined || (existing && existing[field.name] !== null)) values[field.name] = null;
+      }
+    }
+    if (resourceName === 'rooms' && !existing && values.rent_per_bed == null && values.property_id) {
+      // New rooms in a PG / hostel take the property's bed price.
+      const property = await this.db.get('SELECT rent_per_bed FROM properties WHERE id = ?', values.property_id);
+      if (property && property.rent_per_bed != null) values.rent_per_bed = property.rent_per_bed;
     }
 
     if (!Object.keys(errors).length) Object.assign(errors, await this.linkRoomAndBed(resourceName, input, values, existing));

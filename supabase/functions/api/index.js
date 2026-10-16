@@ -726,7 +726,7 @@ module.exports = { Platform, hashPassword, verifyPassword, normalizePhone };
 "src/store.js": [function (module, exports, require) {
 'use strict';
 
-const { resources } = require('./schema');
+const { resources, appliesTo } = require('./schema');
 const { localToday } = require('./reminders');
 
 class HttpError extends Error {
@@ -767,6 +767,7 @@ const COMPUTED_SQL = {
     room_count: '(SELECT COUNT(*) FROM rooms WHERE property_id = t.id)',
     bed_count: '(SELECT COUNT(*) FROM beds b JOIN rooms r ON r.id = b.room_id WHERE r.property_id = t.id)',
     occupied_beds: OCCUPIED_BEDS_SQL('b.room_id IN (SELECT id FROM rooms WHERE property_id = t.id)'),
+    tenant_count: "(SELECT COUNT(*) FROM tenants WHERE property_id = t.id AND status = 'Active')",
   },
   rooms: {
     bed_count: '(SELECT COUNT(*) FROM beds WHERE room_id = t.id)',
@@ -893,6 +894,20 @@ class Store {
       }
       if (value === undefined && !existing && field.default !== undefined) value = field.default;
       if (value !== undefined) values[field.name] = value;
+    }
+
+    if (resourceName === 'properties') {
+      // Clear fields that don't apply to the property type (e.g. bed fields on a villa).
+      const type = values.type !== undefined ? values.type : existing ? existing.type : null;
+      for (const field of def.fields) {
+        if (appliesTo(field, type) || errors[field.name]) continue;
+        if (values[field.name] !== undefined || (existing && existing[field.name] !== null)) values[field.name] = null;
+      }
+    }
+    if (resourceName === 'rooms' && !existing && values.rent_per_bed == null && values.property_id) {
+      // New rooms in a PG / hostel take the property's bed price.
+      const property = await this.db.get('SELECT rent_per_bed FROM properties WHERE id = ?', values.property_id);
+      if (property && property.rent_per_bed != null) values.rent_per_bed = property.rent_per_bed;
     }
 
     if (!Object.keys(errors).length) Object.assign(errors, await this.linkRoomAndBed(resourceName, input, values, existing));
@@ -1145,6 +1160,12 @@ module.exports = { Store, HttpError, getResource, LABEL_SQL };
 
 // Property types that are let out room-wise / bed-wise.
 const SHARED_TYPES = ['PG / Hostel', 'BnB'];
+// Property types that are let out bed-wise (PG, hostel). They get a bed count
+// and bed price instead of a whole-property rent and status.
+const BED_TYPES = ['PG / Hostel'];
+
+// A field with `showFor` is only used for those property types; `hideFor` is
+// used for every other type. Values of fields that don't apply are cleared.
 
 const resources = {
   properties: {
@@ -1153,17 +1174,30 @@ const resources = {
     display: 'name',
     fields: [
       { name: 'name', label: 'Name', type: 'text', required: true, list: true },
-      { name: 'type', label: 'Type', type: 'select', options: ['PG / Hostel', 'Independent House', 'BnB', 'Apartment', 'Villa', 'Commercial', 'Office', 'Land', 'Other'], list: true },
+      {
+        name: 'type',
+        label: 'Type',
+        type: 'select',
+        options: [
+          'PG / Hostel', 'BnB', 'Independent House', 'Villa', 'Apartment', 'SOHO', 'Office', 'Office Cabin', 'Co-working',
+          'Shop', 'Showroom', 'Warehouse / Godown', 'Commercial', 'Land', 'Other',
+        ],
+        list: true,
+      },
       { name: 'address', label: 'Address', type: 'textarea', required: true },
       { name: 'city', label: 'City', type: 'text', list: true },
-      { name: 'units', label: 'Units / floors', type: 'number', min: 0 },
-      { name: 'pg_for', label: 'PG / hostel for', type: 'select', options: ['Gents', 'Ladies', 'Co-living', 'Students', 'Working professionals', 'Family', 'Anyone'] },
-      { name: 'meals', label: 'Meals (mess)', type: 'select', options: ['No food', 'Breakfast only', 'Breakfast & dinner', 'All 3 meals'] },
-      { name: 'gate_timings', label: 'Gate / in-time', type: 'text', placeholder: 'e.g. Gate closes 10:30 pm' },
-      { name: 'visiting_hours', label: 'Visiting hours', type: 'text', placeholder: 'e.g. 10 am – 7 pm, visitors in common area only' },
-      { name: 'warden_contact_id', label: 'Warden / caretaker', type: 'ref', ref: 'contacts', onDelete: 'SET NULL' },
-      { name: 'monthly_rent', label: 'Expected rent', type: 'money', min: 0, list: true },
-      { name: 'status', label: 'Status', type: 'select', options: ['Vacant', 'Occupied', 'Under Maintenance'], default: 'Vacant', list: true },
+      { name: 'total_beds', label: 'Total beds', type: 'number', min: 0, max: 5000, showFor: BED_TYPES, hint: 'Beds you add under Rooms count too; the larger number is used' },
+      { name: 'rent_per_bed', label: 'Bed price (per month)', type: 'money', min: 0, showFor: BED_TYPES, hint: 'Default price for new rooms and beds' },
+      { name: 'pg_for', label: 'PG / hostel for', type: 'select', options: ['Gents', 'Ladies', 'Co-living', 'Students', 'Working professionals', 'Family', 'Anyone'], showFor: BED_TYPES },
+      { name: 'meals', label: 'Meals (mess)', type: 'select', options: ['No food', 'Breakfast only', 'Breakfast & dinner', 'All 3 meals'], showFor: BED_TYPES },
+      { name: 'gate_timings', label: 'Gate / in-time', type: 'text', placeholder: 'e.g. Gate closes 10:30 pm', showFor: BED_TYPES },
+      { name: 'visiting_hours', label: 'Visiting hours', type: 'text', placeholder: 'e.g. 10 am – 7 pm, visitors in common area only', showFor: BED_TYPES },
+      { name: 'warden_contact_id', label: 'Warden / caretaker', type: 'ref', ref: 'contacts', onDelete: 'SET NULL', showFor: BED_TYPES },
+      { name: 'units', label: 'Units / floors', type: 'number', min: 0, hideFor: BED_TYPES },
+      { name: 'area_sqft', label: 'Area (sq ft)', type: 'number', min: 0, hideFor: BED_TYPES },
+      { name: 'furnishing', label: 'Furnishing', type: 'select', options: ['Unfurnished', 'Semi-furnished', 'Fully furnished', 'Bare shell', 'Warm shell'], hideFor: BED_TYPES },
+      { name: 'monthly_rent', label: 'Expected rent', type: 'money', min: 0, list: true, hideFor: BED_TYPES },
+      { name: 'status', label: 'Status', type: 'select', options: ['Vacant', 'Occupied', 'Under Maintenance'], default: 'Vacant', list: true, hideFor: BED_TYPES },
       { name: 'owner_contact_id', label: 'Owner', type: 'ref', ref: 'contacts', onDelete: 'SET NULL' },
       { name: 'notes', label: 'Notes', type: 'textarea' },
     ],
@@ -1329,11 +1363,20 @@ const resources = {
   },
 };
 
-module.exports = { resources, SHARED_TYPES };
+// Whether a property field is used for the given property type.
+function appliesTo(field, type) {
+  if (field.showFor) return field.showFor.includes(type);
+  if (field.hideFor) return !field.hideFor.includes(type);
+  return true;
+}
+
+module.exports = { resources, SHARED_TYPES, BED_TYPES, appliesTo };
 
 }, {}],
 "src/reminders.js": [function (module, exports, require) {
 'use strict';
+
+const { BED_TYPES } = require('./schema');
 
 // Computes everything that needs attention: rent due/overdue, unpaid bills,
 // agreements about to expire, documents expiring or awaiting verification,
@@ -1637,6 +1680,35 @@ async function computeReminders(db, { today = localToday(), horizon = 7, currenc
   };
 }
 
+// Bed totals across properties. A PG / hostel counts the larger of its
+// "Total beds" and the beds added under its rooms, and every active tenant
+// there fills a bed (whether or not a bed has been picked for them).
+async function bedTotals(db) {
+  const rows = await db.all(
+    `SELECT p.type, p.total_beds,
+            (SELECT COUNT(*) FROM beds b JOIN rooms r ON r.id = b.room_id WHERE r.property_id = p.id) AS bed_count,
+            (SELECT COUNT(*) FROM beds b JOIN rooms r ON r.id = b.room_id WHERE r.property_id = p.id
+               AND EXISTS (SELECT 1 FROM tenants x WHERE x.bed_id = b.id AND x.status = 'Active')) AS occupied_beds,
+            (SELECT COUNT(*) FROM tenants x WHERE x.property_id = p.id AND x.status = 'Active') AS tenant_count
+     FROM properties p`,
+  );
+  let total = 0;
+  let occupied = 0;
+  for (const p of rows) {
+    const s = bedStats(p);
+    total += s.total;
+    occupied += s.occupied;
+  }
+  return { total, occupied, vacant: Math.max(total - occupied, 0) };
+}
+
+function bedStats(p) {
+  const bedType = BED_TYPES.includes(p.type);
+  const total = Math.max(bedType ? p.total_beds || 0 : 0, p.bed_count || 0);
+  const occupied = Math.min(bedType ? Math.max(p.tenant_count || 0, p.occupied_beds || 0) : p.occupied_beds || 0, total);
+  return { total, occupied, vacant: total - occupied };
+}
+
 async function computeDashboard(db, { today = localToday(), horizon = 7, currency = 'INR' } = {}) {
   const count = async (table, where = '') => (await db.get(`SELECT COUNT(*) AS n FROM ${table} ${where}`)).n;
   const period = today.slice(0, 7);
@@ -1658,11 +1730,7 @@ async function computeDashboard(db, { today = localToday(), horizon = 7, currenc
   ).s;
   const collected = (await db.get('SELECT COALESCE(SUM(amount), 0) AS s FROM rent_payments WHERE period = ?', period)).s;
   const reminders = await computeReminders(db, { today, horizon, currency });
-  const beds = await db.get(
-    `SELECT COUNT(*) AS total,
-            SUM(CASE WHEN EXISTS (SELECT 1 FROM tenants x WHERE x.bed_id = b.id AND x.status = 'Active') THEN 1 ELSE 0 END) AS occupied
-     FROM beds b`,
-  );
+  const beds = await bedTotals(db);
   const overdueRent = reminders.rent.filter((r) => r.state === 'overdue');
 
   return {
@@ -1677,7 +1745,7 @@ async function computeDashboard(db, { today = localToday(), horizon = 7, currenc
       unpaid_bills: await count('bills', "WHERE status = 'Unpaid'"),
     },
     occupancy: { occupied, total: await count('properties') },
-    beds: { total: beds.total, occupied: beds.occupied || 0, rooms: await count('rooms') },
+    beds: { ...beds, rooms: await count('rooms') },
     rent: {
       expected_this_month: expected,
       collected_this_month: collected,
@@ -1689,9 +1757,9 @@ async function computeDashboard(db, { today = localToday(), horizon = 7, currenc
   };
 }
 
-module.exports = { computeReminders, computeDashboard, localToday, addDays, addMonths, dueDateFor };
+module.exports = { computeReminders, computeDashboard, bedStats, localToday, addDays, addMonths, dueDateFor };
 
-}, {}],
+}, {"./schema":"src/schema.js"}],
 "src/db.js": [function (module, exports, require) {
 'use strict';
 
@@ -2262,9 +2330,9 @@ async function loadSampleData(store) {
   const warden = await store.create('contacts', { name: 'Mohan (Warden)', category: 'Warden', phone: '+91 90000 55555', available_hours: '24x7 at Sunrise PG' });
   await store.create('contacts', { name: 'Bright Electricals', category: 'Electrician', phone: '+91 99887 76655', available_hours: 'Daily 10am-8pm' });
 
-  const p1 = await store.create('properties', { name: 'Green Park 2BHK', type: 'Apartment', address: 'Flat 302, Green Park Residency, MG Road', city: 'Bengaluru', units: 1, monthly_rent: 25000, status: 'Occupied', owner_contact_id: owner.id });
+  const p1 = await store.create('properties', { name: 'Green Park 2BHK', type: 'Apartment', area_sqft: 1150, furnishing: 'Semi-furnished', address: 'Flat 302, Green Park Residency, MG Road', city: 'Bengaluru', units: 1, monthly_rent: 25000, status: 'Occupied', owner_contact_id: owner.id });
   const p2 = await store.create('properties', { name: 'Lake View Villa', type: 'Villa', address: '14 Lake View Road', city: 'Pune', units: 1, monthly_rent: 60000, status: 'Occupied', owner_contact_id: owner.id });
-  const p3 = await store.create('properties', { name: 'City Centre Shop', type: 'Commercial', address: 'Shop 5, City Centre Mall', city: 'Bengaluru', units: 1, monthly_rent: 40000, status: 'Vacant' });
+  const p3 = await store.create('properties', { name: 'City Centre Shop', type: 'Shop', area_sqft: 450, furnishing: 'Bare shell', address: 'Shop 5, City Centre Mall', city: 'Bengaluru', units: 1, monthly_rent: 40000, status: 'Vacant' });
 
   const t1 = await store.create('tenants', { full_name: 'Anita Desai', phone: '+91 90000 11111', email: 'anita@example.com', property_id: p1.id, unit: '302', move_in: addDays(today, -200), id_type: 'Aadhaar', id_number: 'XXXX-XXXX-1234', status: 'Active' });
   const t2 = await store.create('tenants', { full_name: 'Karan Mehta', phone: '+91 90000 22222', email: 'karan@example.com', property_id: p2.id, move_in: addDays(today, -330), id_type: 'PAN', id_number: 'ABCDE1234F', status: 'Active' });
@@ -2283,7 +2351,7 @@ async function loadSampleData(store) {
   await store.create('rent_payments', { agreement_id: a2.id, period: thisMonth, amount: 30000, paid_on: today, method: 'Bank Transfer', notes: 'Half paid, rest promised next week' });
 
   // A PG let out bed-wise and a BnB let out room-wise.
-  const pg = await store.create('properties', { name: 'Sunrise PG', type: 'PG / Hostel', pg_for: 'Gents', meals: 'Breakfast & dinner', gate_timings: 'Gate closes 10:30 pm', visiting_hours: '10 am – 7 pm', warden_contact_id: warden.id, address: '22 4th Cross, Koramangala', city: 'Bengaluru', units: 3, status: 'Occupied', owner_contact_id: owner.id });
+  const pg = await store.create('properties', { name: 'Sunrise PG', type: 'PG / Hostel', pg_for: 'Gents', meals: 'Breakfast & dinner', gate_timings: 'Gate closes 10:30 pm', visiting_hours: '10 am – 7 pm', warden_contact_id: warden.id, address: '22 4th Cross, Koramangala', city: 'Bengaluru', total_beds: 6, rent_per_bed: 8000, owner_contact_id: owner.id });
   const r101 = await store.create('rooms', { property_id: pg.id, room_number: '101', floor: '1', sharing: 'Double', total_beds: 2, rent_per_bed: 9000, ac: true, attached_bath: true });
   await store.create('rooms', { property_id: pg.id, room_number: '102', floor: '1', sharing: 'Triple', total_beds: 3, rent_per_bed: 7000, attached_bath: true });
   await store.create('rooms', { property_id: pg.id, room_number: '201', floor: '2', sharing: 'Single', total_beds: 1, rent_per_bed: 13000, ac: true });

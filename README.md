@@ -12,7 +12,7 @@ No dependencies: it runs on Node.js alone, using the built-in SQLite module.
 | --- | --- |
 | **Dashboard** | Occupancy, rent collected vs expected this month, overdue rent, unpaid bills, and everything that needs attention |
 | **Reminders** | Rent due, overdue and upcoming; bills due; agreements expiring within 60 days; documents expiring or awaiting verification; upcoming appointments. Look ahead from today up to 60 days |
-| **Properties** | Name, type (PG / Hostel, Independent House, BnB, Apartment, Villa, Commercial…), address, expected rent, status, owner. PG/hostel properties also record who they're for (gents, ladies, students…), the meal plan, gate in-time, visiting hours and the warden |
+| **Properties** | Name, type, address, owner. A **PG / Hostel** has total beds, a bed price (the default for its rooms), live occupied / vacant bed counts, who it's for (gents, ladies, students…), the meal plan, gate in-time, visiting hours and the warden. Every other type (Independent House, BnB, Villa, Apartment, SOHO, Office, Office Cabin, Co-working, Shop, Showroom, Warehouse / Godown, Commercial, Land) has area, furnishing, expected rent and a vacant / occupied status. The form only shows the fields for the chosen type |
 | **Bed board** | One screen for each PG/BnB showing every room and bed: vacant, occupied (with the tenant's name) or reserved/under maintenance. Click a vacant bed to add a tenant to it |
 | **Rooms** | Room number, floor, sharing (single/double/triple…), number of beds, rent per bed or per room, AC, attached bathroom. Beds are created automatically |
 | **Beds** | Each bed in a room, with its own rent and status, and who is staying in it |

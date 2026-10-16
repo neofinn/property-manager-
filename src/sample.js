@@ -18,9 +18,9 @@ async function loadSampleData(store) {
   const warden = await store.create('contacts', { name: 'Mohan (Warden)', category: 'Warden', phone: '+91 90000 55555', available_hours: '24x7 at Sunrise PG' });
   await store.create('contacts', { name: 'Bright Electricals', category: 'Electrician', phone: '+91 99887 76655', available_hours: 'Daily 10am-8pm' });
 
-  const p1 = await store.create('properties', { name: 'Green Park 2BHK', type: 'Apartment', address: 'Flat 302, Green Park Residency, MG Road', city: 'Bengaluru', units: 1, monthly_rent: 25000, status: 'Occupied', owner_contact_id: owner.id });
+  const p1 = await store.create('properties', { name: 'Green Park 2BHK', type: 'Apartment', area_sqft: 1150, furnishing: 'Semi-furnished', address: 'Flat 302, Green Park Residency, MG Road', city: 'Bengaluru', units: 1, monthly_rent: 25000, status: 'Occupied', owner_contact_id: owner.id });
   const p2 = await store.create('properties', { name: 'Lake View Villa', type: 'Villa', address: '14 Lake View Road', city: 'Pune', units: 1, monthly_rent: 60000, status: 'Occupied', owner_contact_id: owner.id });
-  const p3 = await store.create('properties', { name: 'City Centre Shop', type: 'Commercial', address: 'Shop 5, City Centre Mall', city: 'Bengaluru', units: 1, monthly_rent: 40000, status: 'Vacant' });
+  const p3 = await store.create('properties', { name: 'City Centre Shop', type: 'Shop', area_sqft: 450, furnishing: 'Bare shell', address: 'Shop 5, City Centre Mall', city: 'Bengaluru', units: 1, monthly_rent: 40000, status: 'Vacant' });
 
   const t1 = await store.create('tenants', { full_name: 'Anita Desai', phone: '+91 90000 11111', email: 'anita@example.com', property_id: p1.id, unit: '302', move_in: addDays(today, -200), id_type: 'Aadhaar', id_number: 'XXXX-XXXX-1234', status: 'Active' });
   const t2 = await store.create('tenants', { full_name: 'Karan Mehta', phone: '+91 90000 22222', email: 'karan@example.com', property_id: p2.id, move_in: addDays(today, -330), id_type: 'PAN', id_number: 'ABCDE1234F', status: 'Active' });
@@ -39,7 +39,7 @@ async function loadSampleData(store) {
   await store.create('rent_payments', { agreement_id: a2.id, period: thisMonth, amount: 30000, paid_on: today, method: 'Bank Transfer', notes: 'Half paid, rest promised next week' });
 
   // A PG let out bed-wise and a BnB let out room-wise.
-  const pg = await store.create('properties', { name: 'Sunrise PG', type: 'PG / Hostel', pg_for: 'Gents', meals: 'Breakfast & dinner', gate_timings: 'Gate closes 10:30 pm', visiting_hours: '10 am – 7 pm', warden_contact_id: warden.id, address: '22 4th Cross, Koramangala', city: 'Bengaluru', units: 3, status: 'Occupied', owner_contact_id: owner.id });
+  const pg = await store.create('properties', { name: 'Sunrise PG', type: 'PG / Hostel', pg_for: 'Gents', meals: 'Breakfast & dinner', gate_timings: 'Gate closes 10:30 pm', visiting_hours: '10 am – 7 pm', warden_contact_id: warden.id, address: '22 4th Cross, Koramangala', city: 'Bengaluru', total_beds: 6, rent_per_bed: 8000, owner_contact_id: owner.id });
   const r101 = await store.create('rooms', { property_id: pg.id, room_number: '101', floor: '1', sharing: 'Double', total_beds: 2, rent_per_bed: 9000, ac: true, attached_bath: true });
   await store.create('rooms', { property_id: pg.id, room_number: '102', floor: '1', sharing: 'Triple', total_beds: 3, rent_per_bed: 7000, attached_bath: true });
   await store.create('rooms', { property_id: pg.id, room_number: '201', floor: '2', sharing: 'Single', total_beds: 1, rent_per_bed: 13000, ac: true });

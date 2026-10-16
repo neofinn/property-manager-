@@ -1,5 +1,7 @@
 'use strict';
 
+const { BED_TYPES } = require('./schema');
+
 // Computes everything that needs attention: rent due/overdue, unpaid bills,
 // agreements about to expire, documents expiring or awaiting verification,
 // and upcoming appointments.
@@ -302,6 +304,35 @@ async function computeReminders(db, { today = localToday(), horizon = 7, currenc
   };
 }
 
+// Bed totals across properties. A PG / hostel counts the larger of its
+// "Total beds" and the beds added under its rooms, and every active tenant
+// there fills a bed (whether or not a bed has been picked for them).
+async function bedTotals(db) {
+  const rows = await db.all(
+    `SELECT p.type, p.total_beds,
+            (SELECT COUNT(*) FROM beds b JOIN rooms r ON r.id = b.room_id WHERE r.property_id = p.id) AS bed_count,
+            (SELECT COUNT(*) FROM beds b JOIN rooms r ON r.id = b.room_id WHERE r.property_id = p.id
+               AND EXISTS (SELECT 1 FROM tenants x WHERE x.bed_id = b.id AND x.status = 'Active')) AS occupied_beds,
+            (SELECT COUNT(*) FROM tenants x WHERE x.property_id = p.id AND x.status = 'Active') AS tenant_count
+     FROM properties p`,
+  );
+  let total = 0;
+  let occupied = 0;
+  for (const p of rows) {
+    const s = bedStats(p);
+    total += s.total;
+    occupied += s.occupied;
+  }
+  return { total, occupied, vacant: Math.max(total - occupied, 0) };
+}
+
+function bedStats(p) {
+  const bedType = BED_TYPES.includes(p.type);
+  const total = Math.max(bedType ? p.total_beds || 0 : 0, p.bed_count || 0);
+  const occupied = Math.min(bedType ? Math.max(p.tenant_count || 0, p.occupied_beds || 0) : p.occupied_beds || 0, total);
+  return { total, occupied, vacant: total - occupied };
+}
+
 async function computeDashboard(db, { today = localToday(), horizon = 7, currency = 'INR' } = {}) {
   const count = async (table, where = '') => (await db.get(`SELECT COUNT(*) AS n FROM ${table} ${where}`)).n;
   const period = today.slice(0, 7);
@@ -323,11 +354,7 @@ async function computeDashboard(db, { today = localToday(), horizon = 7, currenc
   ).s;
   const collected = (await db.get('SELECT COALESCE(SUM(amount), 0) AS s FROM rent_payments WHERE period = ?', period)).s;
   const reminders = await computeReminders(db, { today, horizon, currency });
-  const beds = await db.get(
-    `SELECT COUNT(*) AS total,
-            SUM(CASE WHEN EXISTS (SELECT 1 FROM tenants x WHERE x.bed_id = b.id AND x.status = 'Active') THEN 1 ELSE 0 END) AS occupied
-     FROM beds b`,
-  );
+  const beds = await bedTotals(db);
   const overdueRent = reminders.rent.filter((r) => r.state === 'overdue');
 
   return {
@@ -342,7 +369,7 @@ async function computeDashboard(db, { today = localToday(), horizon = 7, currenc
       unpaid_bills: await count('bills', "WHERE status = 'Unpaid'"),
     },
     occupancy: { occupied, total: await count('properties') },
-    beds: { total: beds.total, occupied: beds.occupied || 0, rooms: await count('rooms') },
+    beds: { ...beds, rooms: await count('rooms') },
     rent: {
       expected_this_month: expected,
       collected_this_month: collected,
@@ -354,4 +381,4 @@ async function computeDashboard(db, { today = localToday(), horizon = 7, currenc
   };
 }
 
-module.exports = { computeReminders, computeDashboard, localToday, addDays, addMonths, dueDateFor };
+module.exports = { computeReminders, computeDashboard, bedStats, localToday, addDays, addMonths, dueDateFor };

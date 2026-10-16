@@ -11,6 +11,12 @@
 
 // Property types that are let out room-wise / bed-wise.
 const SHARED_TYPES = ['PG / Hostel', 'BnB'];
+// Property types that are let out bed-wise (PG, hostel). They get a bed count
+// and bed price instead of a whole-property rent and status.
+const BED_TYPES = ['PG / Hostel'];
+
+// A field with `showFor` is only used for those property types; `hideFor` is
+// used for every other type. Values of fields that don't apply are cleared.
 
 const resources = {
   properties: {
@@ -19,17 +25,30 @@ const resources = {
     display: 'name',
     fields: [
       { name: 'name', label: 'Name', type: 'text', required: true, list: true },
-      { name: 'type', label: 'Type', type: 'select', options: ['PG / Hostel', 'Independent House', 'BnB', 'Apartment', 'Villa', 'Commercial', 'Office', 'Land', 'Other'], list: true },
+      {
+        name: 'type',
+        label: 'Type',
+        type: 'select',
+        options: [
+          'PG / Hostel', 'BnB', 'Independent House', 'Villa', 'Apartment', 'SOHO', 'Office', 'Office Cabin', 'Co-working',
+          'Shop', 'Showroom', 'Warehouse / Godown', 'Commercial', 'Land', 'Other',
+        ],
+        list: true,
+      },
       { name: 'address', label: 'Address', type: 'textarea', required: true },
       { name: 'city', label: 'City', type: 'text', list: true },
-      { name: 'units', label: 'Units / floors', type: 'number', min: 0 },
-      { name: 'pg_for', label: 'PG / hostel for', type: 'select', options: ['Gents', 'Ladies', 'Co-living', 'Students', 'Working professionals', 'Family', 'Anyone'] },
-      { name: 'meals', label: 'Meals (mess)', type: 'select', options: ['No food', 'Breakfast only', 'Breakfast & dinner', 'All 3 meals'] },
-      { name: 'gate_timings', label: 'Gate / in-time', type: 'text', placeholder: 'e.g. Gate closes 10:30 pm' },
-      { name: 'visiting_hours', label: 'Visiting hours', type: 'text', placeholder: 'e.g. 10 am – 7 pm, visitors in common area only' },
-      { name: 'warden_contact_id', label: 'Warden / caretaker', type: 'ref', ref: 'contacts', onDelete: 'SET NULL' },
-      { name: 'monthly_rent', label: 'Expected rent', type: 'money', min: 0, list: true },
-      { name: 'status', label: 'Status', type: 'select', options: ['Vacant', 'Occupied', 'Under Maintenance'], default: 'Vacant', list: true },
+      { name: 'total_beds', label: 'Total beds', type: 'number', min: 0, max: 5000, showFor: BED_TYPES, hint: 'Beds you add under Rooms count too; the larger number is used' },
+      { name: 'rent_per_bed', label: 'Bed price (per month)', type: 'money', min: 0, showFor: BED_TYPES, hint: 'Default price for new rooms and beds' },
+      { name: 'pg_for', label: 'PG / hostel for', type: 'select', options: ['Gents', 'Ladies', 'Co-living', 'Students', 'Working professionals', 'Family', 'Anyone'], showFor: BED_TYPES },
+      { name: 'meals', label: 'Meals (mess)', type: 'select', options: ['No food', 'Breakfast only', 'Breakfast & dinner', 'All 3 meals'], showFor: BED_TYPES },
+      { name: 'gate_timings', label: 'Gate / in-time', type: 'text', placeholder: 'e.g. Gate closes 10:30 pm', showFor: BED_TYPES },
+      { name: 'visiting_hours', label: 'Visiting hours', type: 'text', placeholder: 'e.g. 10 am – 7 pm, visitors in common area only', showFor: BED_TYPES },
+      { name: 'warden_contact_id', label: 'Warden / caretaker', type: 'ref', ref: 'contacts', onDelete: 'SET NULL', showFor: BED_TYPES },
+      { name: 'units', label: 'Units / floors', type: 'number', min: 0, hideFor: BED_TYPES },
+      { name: 'area_sqft', label: 'Area (sq ft)', type: 'number', min: 0, hideFor: BED_TYPES },
+      { name: 'furnishing', label: 'Furnishing', type: 'select', options: ['Unfurnished', 'Semi-furnished', 'Fully furnished', 'Bare shell', 'Warm shell'], hideFor: BED_TYPES },
+      { name: 'monthly_rent', label: 'Expected rent', type: 'money', min: 0, list: true, hideFor: BED_TYPES },
+      { name: 'status', label: 'Status', type: 'select', options: ['Vacant', 'Occupied', 'Under Maintenance'], default: 'Vacant', list: true, hideFor: BED_TYPES },
       { name: 'owner_contact_id', label: 'Owner', type: 'ref', ref: 'contacts', onDelete: 'SET NULL' },
       { name: 'notes', label: 'Notes', type: 'textarea' },
     ],
@@ -195,4 +214,11 @@ const resources = {
   },
 };
 
-module.exports = { resources, SHARED_TYPES };
+// Whether a property field is used for the given property type.
+function appliesTo(field, type) {
+  if (field.showFor) return field.showFor.includes(type);
+  if (field.hideFor) return !field.hideFor.includes(type);
+  return true;
+}
+
+module.exports = { resources, SHARED_TYPES, BED_TYPES, appliesTo };

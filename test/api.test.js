@@ -278,6 +278,33 @@ test('invite code is required when configured', async () => {
   }
 });
 
+test('PG / hostel has total beds and bed price; other types have rent, area and status', async () => {
+  const hostel = (await call('POST', '/api/properties', { name: 'Bed Count Hostel', type: 'PG / Hostel', address: 'H Rd', total_beds: 10, rent_per_bed: 6500, monthly_rent: 99, status: 'Occupied', units: 4 })).body;
+  assert.deepEqual([hostel.total_beds, hostel.rent_per_bed], [10, 6500]);
+  assert.deepEqual([hostel.monthly_rent, hostel.status, hostel.units], [null, null, null], 'whole-property fields are cleared for a PG');
+
+  // New rooms take the hostel's bed price; tenants fill beds even before one is picked.
+  const room = (await call('POST', '/api/rooms', { property_id: hostel.id, room_number: 'G1', total_beds: 2 })).body;
+  assert.equal(room.rent_per_bed, 6500);
+  await call('POST', '/api/tenants', { full_name: 'Asha', property_id: hostel.id });
+  const before = (await call('GET', '/api/dashboard')).body.beds;
+  let row = (await call('GET', `/api/properties/${hostel.id}`)).body;
+  assert.deepEqual([row.bed_count, row.tenant_count], [2, 1]);
+
+  // Switching to a shop clears the bed fields and keeps the shop ones.
+  const shop = (await call('PATCH', `/api/properties/${hostel.id}`, { type: 'Shop', area_sqft: 300, furnishing: 'Bare shell', monthly_rent: 30000 })).body;
+  assert.deepEqual([shop.total_beds, shop.rent_per_bed, shop.pg_for], [null, null, null]);
+  assert.deepEqual([shop.area_sqft, shop.furnishing, shop.monthly_rent], [300, 'Bare shell', 30000]);
+  const after = (await call('GET', '/api/dashboard')).body.beds;
+  assert.equal(before.total - after.total, 8, 'the 10 planned beds became the 2 real ones');
+  assert.equal(before.occupied - after.occupied, 1);
+
+  for (const type of ['Villa', 'Apartment', 'SOHO', 'Office Cabin', 'Shop']) {
+    assert.equal((await call('POST', '/api/properties', { name: type, type, address: 'A' })).status, 201);
+  }
+  assert.equal((await call('POST', '/api/properties', { name: 'Bad', type: 'Castle', address: 'A' })).status, 400);
+});
+
 test('PG rooms and beds: auto beds, linking, occupancy and rent', async () => {
   const pg = (await call('POST', '/api/properties', { name: 'Test PG', type: 'PG / Hostel', address: 'PG Rd', pg_for: 'Ladies', meals: 'All 3 meals', gate_timings: 'Gate closes 10 pm' })).body;
   const other = (await call('POST', '/api/properties', { name: 'Other', type: 'Independent House', address: 'X' })).body;
