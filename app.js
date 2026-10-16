@@ -591,14 +591,15 @@
         return `<div class="field">${label}<select id="${id}" name="${field.name}"${dep}${req}><option value="">—</option>${opts.map((o) => `<option value="${o.id}" ${String(o.id) === String(v) ? 'selected' : ''}>${esc(o.label)}</option>`).join('')}</select></div>`;
       }
       case 'pricelist': {
-        const rows = priceList(value);
+        // Start with one empty line so there is something to type into.
+        const rows = priceList(value).length ? priceList(value) : [{}];
         return `<div class="field wide pricelist">
           <span class="field-label">${esc(field.label)}</span>
-          <div class="price-rows" id="${id}" data-field="${field.name}">
-            <div class="price-row price-head" aria-hidden="true"><span>${esc(field.item.label)}</span><span>${esc(field.extra ? field.extra.label : '')}</span><span>Price / month</span><span></span></div>
+          <div class="price-rows${field.amount ? ' with-amount' : ''}" id="${id}" data-field="${field.name}">
+            <div class="price-row price-head" aria-hidden="true"><span>${esc(field.item.label)}</span><span>${esc(field.extra ? field.extra.label : '')}</span><span>${esc(field.priceLabel || 'Price')}</span>${field.amount ? '<span>Amount</span>' : ''}<span></span></div>
             ${rows.map((r) => priceRowHtml(field, r)).join('')}
           </div>
-          <div><button type="button" class="btn small" data-add-price="${field.name}">${esc(field.addLabel || '+ Add price')}</button></div>
+          <div class="price-foot"><button type="button" class="btn small" data-add-price="${field.name}">${esc(field.addLabel || '+ Add line')}</button>${field.amount ? `<span class="price-total" id="${id}-total"></span>` : ''}</div>
           ${field.hint ? `<span class="hint">${esc(field.hint)}</span>` : ''}
         </div>`;
       }
@@ -626,7 +627,8 @@
     return `<div class="price-row">
       <input data-k="label" value="${esc(r.label ?? '')}" placeholder="${esc(field.item.placeholder || '')}" aria-label="${esc(field.item.label)}" maxlength="100">
       ${extra ? `<input data-k="${extra.name}" type="number" min="0" step="1" value="${esc(r[extra.name] ?? '')}" placeholder="${esc(extra.label)}" aria-label="${esc(extra.label)}">` : '<span></span>'}
-      <input data-k="price" type="number" min="0" step="0.01" value="${esc(r.price ?? '')}" placeholder="Price" aria-label="Price per month">
+      <input data-k="price" type="number" min="0" step="0.01" value="${esc(r.price ?? '')}" placeholder="${esc(field.priceLabel || 'Price')}" aria-label="${esc(field.priceLabel || 'Price')}">
+      ${field.amount ? '<output class="price-amount" aria-label="Amount"></output>' : ''}
       <button type="button" class="btn small danger" data-remove-price aria-label="Remove row">✕</button>
     </div>`;
   }
@@ -637,6 +639,20 @@
       const box = $(`#f-${f.name}`);
       if (!box) continue;
       const add = $(`[data-add-price="${f.name}"]`);
+      // Amount = qty × rate on each line, and the totals under the lines.
+      const totals = () => {
+        if (!f.amount) return;
+        let qty = 0;
+        let sum = 0;
+        for (const row of box.querySelectorAll('.price-row:not(.price-head)')) {
+          const q = Number(row.querySelector(`[data-k="${f.extra.name}"]`).value) || 0;
+          const rate = Number(row.querySelector('[data-k=price]').value) || 0;
+          row.querySelector('.price-amount').textContent = q && rate ? money(q * rate) : '';
+          qty += q;
+          sum += q * rate;
+        }
+        $(`#f-${f.name}-total`).textContent = qty ? `Total: ${qty} ${f.extra.unit || ''} · ${money(sum)} / month` : '';
+      };
       add.addEventListener('click', () => {
         box.insertAdjacentHTML('beforeend', priceRowHtml(f));
         box.lastElementChild.querySelector('input').focus();
@@ -644,7 +660,10 @@
       box.addEventListener('click', (e) => {
         const btn = e.target.closest('[data-remove-price]');
         if (btn) btn.closest('.price-row').remove();
+        totals();
       });
+      box.addEventListener('input', totals);
+      totals();
     }
   }
 

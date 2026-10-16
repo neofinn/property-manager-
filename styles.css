@@ -280,10 +280,17 @@ dialog form { display: flex; flex-direction: column; max-height: calc(100vh - 50
 .price-row { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr) auto; gap: 6px; align-items: center; }
 .price-row input { min-width: 0; }
 .price-head { font-size: 12px; color: var(--muted); }
+.price-rows.with-amount .price-row { grid-template-columns: minmax(0, 2fr) minmax(0, 0.8fr) minmax(0, 1fr) minmax(0, 1fr) auto; }
+.price-amount { font-variant-numeric: tabular-nums; text-align: right; }
 .price-head:last-child { display: none; }
+.price-foot { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; }
+.price-total { font-size: 13px; font-weight: 600; }
 .price-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 8px; }
 @media (max-width: 560px) {
-  .price-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; }
+  .price-row, .price-rows.with-amount .price-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; }
+  .price-rows.with-amount .price-amount { grid-column: 1 / -1; order: 1; text-align: left; font-size: 12px; color: var(--muted); }
+  .price-rows.with-amount .price-head > :nth-child(4) { display: none; }
+  .price-rows.with-amount .price-amount:not(:empty)::before { content: 'Amount: '; }
   .price-row > :first-child { grid-column: 1 / -1; }
   .price-row:not(.price-head) + .price-row { border-top: 1px dashed var(--border); padding-top: 6px; }
 }
