@@ -36,6 +36,25 @@
     return { total, occupied, vacant: total - occupied };
   }
 
+  const priceList = (v) => {
+    if (Array.isArray(v)) return v;
+    try {
+      const list = JSON.parse(v || '[]');
+      return Array.isArray(list) ? list : [];
+    } catch {
+      return [];
+    }
+  };
+
+  // "₹6,000 – ₹9,000" across a price list (or one price).
+  function priceRange(list) {
+    const prices = priceList(list).map((p) => p.price).filter((n) => typeof n === 'number');
+    if (!prices.length) return '';
+    const lo = Math.min(...prices);
+    const hi = Math.max(...prices);
+    return lo === hi ? money(lo) : `${money(lo)} – ${money(hi)}`;
+  }
+
   function bedSummary(p) {
     const s = bedStats(p);
     if (!s.total) return '<span class="muted">No beds yet</span>';
@@ -405,10 +424,11 @@
             <div class="page-head">
               <h3>${esc(p.name)} <span class="pill">${esc(p.type || '')}</span>${p.pg_for ? ` <span class="pill">${esc(p.pg_for)}</span>` : ''}${p.meals && p.meals !== 'No food' ? ` <span class="pill">🍽 ${esc(p.meals)}</span>` : ''}</h3>
               <div class="head-actions">
-                <span class="muted">${BED_TYPES.includes(p.type) ? `${bedSummary(p)}${p.rent_per_bed != null ? ` · ${esc(money(p.rent_per_bed))} / bed` : ''}` : p.bed_count ? occupancyText(p.occupied_beds, p.bed_count) : 'No beds yet'}</span>
+                <span class="muted">${BED_TYPES.includes(p.type) ? `${bedSummary(p)}${priceRange(p.bed_prices) || p.rent_per_bed != null ? ` · ${esc(priceRange(p.bed_prices) || money(p.rent_per_bed))} / bed` : ''}` : p.bed_count ? occupancyText(p.occupied_beds, p.bed_count) : 'No beds yet'}</span>
                 <a class="btn small primary" href="#/rooms?property_id=${p.id}">Manage rooms</a>
               </div>
             </div>
+            ${priceList(p.bed_prices).length ? `<p class="price-chips">${priceList(p.bed_prices).map((x) => `<span class="pill">${esc(x.label)}${x.beds != null ? ` · ${x.beds} bed${x.beds === 1 ? '' : 's'}` : ''} · ${esc(money(x.price))}</span>`).join(' ')}</p>` : ''}
             ${p.gate_timings || p.visiting_hours || p.warden_contact_id ? `<p class="muted small board-info">${[p.gate_timings && `🕙 ${esc(p.gate_timings)}`, p.visiting_hours && `Visitors ${esc(p.visiting_hours)}`, p.warden_contact_id && `Warden: ${esc(p.warden_contact_id_label)}`].filter(Boolean).join(' · ')}</p>` : ''}
             ${pRooms.length ? `<div class="rooms">${pRooms.map((r) => {
               const rBeds = beds.filter((b) => b.room_id === r.id);
@@ -505,12 +525,19 @@
   // and vacant beds in those columns instead.
   function listCell(name, f, row) {
     if (name === 'properties' && !appliesTo(f, row.type)) {
-      if (f.name === 'monthly_rent') return row.rent_per_bed != null ? `${esc(money(row.rent_per_bed))} <span class="muted small">/ bed</span>` : '';
+      if (f.name === 'monthly_rent') {
+        const range = priceRange(row.bed_prices) || (row.rent_per_bed != null ? money(row.rent_per_bed) : '');
+        return range ? `${esc(range)} <span class="muted small">/ bed</span>` : '';
+      }
       if (f.name === 'status') {
         const s = bedStats(row);
         return s.total ? `<span class="pill ${s.vacant ? 'good' : 'warn'}">${s.vacant ? `${s.vacant} bed${s.vacant === 1 ? '' : 's'} vacant` : 'Full'}</span>` : '';
       }
       return '';
+    }
+    if (name === 'properties' && f.name === 'monthly_rent' && priceList(row.floor_prices).length) {
+      const range = priceRange(row.floor_prices);
+      return row.monthly_rent != null ? `${formatCell(f, row)}<div class="muted small">floors ${esc(range)}</div>` : `${esc(range)} <span class="muted small">by floor</span>`;
     }
     return formatCell(f, row);
   }
@@ -563,6 +590,18 @@
         const dep = field.dependsOn ? ` data-depends-on="${field.dependsOn}" data-ref="${field.ref}" data-value="${esc(v)}"` : '';
         return `<div class="field">${label}<select id="${id}" name="${field.name}"${dep}${req}><option value="">—</option>${opts.map((o) => `<option value="${o.id}" ${String(o.id) === String(v) ? 'selected' : ''}>${esc(o.label)}</option>`).join('')}</select></div>`;
       }
+      case 'pricelist': {
+        const rows = priceList(value);
+        return `<div class="field wide pricelist">
+          <span class="field-label">${esc(field.label)}</span>
+          <div class="price-rows" id="${id}" data-field="${field.name}">
+            <div class="price-row price-head" aria-hidden="true"><span>${esc(field.item.label)}</span><span>${esc(field.extra ? field.extra.label : '')}</span><span>Price / month</span><span></span></div>
+            ${rows.map((r) => priceRowHtml(field, r)).join('')}
+          </div>
+          <div><button type="button" class="btn small" data-add-price="${field.name}">${esc(field.addLabel || '+ Add price')}</button></div>
+          ${field.hint ? `<span class="hint">${esc(field.hint)}</span>` : ''}
+        </div>`;
+      }
       case 'bool':
         return `<div class="field check"><label><input type="checkbox" id="${id}" name="${field.name}" ${v ? 'checked' : ''}> ${esc(field.label)}</label></div>`;
       case 'file': {
@@ -582,6 +621,41 @@
     }
   }
 
+  function priceRowHtml(field, r = {}) {
+    const extra = field.extra;
+    return `<div class="price-row">
+      <input data-k="label" value="${esc(r.label ?? '')}" placeholder="${esc(field.item.placeholder || '')}" aria-label="${esc(field.item.label)}" maxlength="100">
+      ${extra ? `<input data-k="${extra.name}" type="number" min="0" step="1" value="${esc(r[extra.name] ?? '')}" placeholder="${esc(extra.label)}" aria-label="${esc(extra.label)}">` : '<span></span>'}
+      <input data-k="price" type="number" min="0" step="0.01" value="${esc(r.price ?? '')}" placeholder="Price" aria-label="Price per month">
+      <button type="button" class="btn small danger" data-remove-price aria-label="Remove row">✕</button>
+    </div>`;
+  }
+
+  // "+ Add" and "✕" buttons of price lists in the open form.
+  function wirePriceLists(def) {
+    for (const f of def.fields.filter((x) => x.type === 'pricelist')) {
+      const box = $(`#f-${f.name}`);
+      if (!box) continue;
+      const add = $(`[data-add-price="${f.name}"]`);
+      add.addEventListener('click', () => {
+        box.insertAdjacentHTML('beforeend', priceRowHtml(f));
+        box.lastElementChild.querySelector('input').focus();
+      });
+      box.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-remove-price]');
+        if (btn) btn.closest('.price-row').remove();
+      });
+    }
+  }
+
+  function readPriceList(f) {
+    return [...document.querySelectorAll(`#f-${f.name} .price-row:not(.price-head)`)].map((r) => {
+      const item = {};
+      for (const input of r.querySelectorAll('input[data-k]')) item[input.dataset.k] = input.value.trim() === '' ? null : input.value.trim();
+      return item;
+    }).filter((item) => Object.values(item).some((v) => v !== null));
+  }
+
   async function openForm(name, row = null, preset = {}) {
     const def = resource(name);
     formContext = { name, id: row ? row.id : null };
@@ -596,6 +670,8 @@
     $('#form-fields').innerHTML = inputs.join('');
     wireDependentSelects(name);
     wireTypeFields(def);
+    wirePriceLists(def);
+    if (name === 'rooms') wireRoomPrices();
     const dialog = $('#dialog');
     if (!dialog.open) dialog.showModal();
     const first = $('#form-fields input:not([type=checkbox]), #form-fields select, #form-fields textarea');
@@ -614,6 +690,26 @@
       }
     };
     type.addEventListener('change', refresh);
+    refresh();
+  }
+
+  // A new room's bed rent can be picked from its PG's bed prices.
+  function wireRoomPrices() {
+    const form = $('#record-form');
+    const property = form.elements.property_id;
+    const rent = form.elements.rent_per_bed;
+    if (!property || !rent) return;
+    rent.setAttribute('list', 'bed-price-list');
+    rent.insertAdjacentHTML('afterend', '<datalist id="bed-price-list"></datalist><span class="hint" id="bed-price-hint" hidden></span>');
+    const refresh = () => {
+      const p = (state.optionsCache.properties || []).find((o) => String(o.id) === property.value);
+      const list = priceList(p && p.bed_prices);
+      $('#bed-price-list').innerHTML = list.map((x) => `<option value="${x.price}">${esc(x.label)}</option>`).join('');
+      const hint = $('#bed-price-hint');
+      hint.hidden = !list.length;
+      hint.textContent = list.length ? `Bed prices: ${list.map((x) => `${x.label} ${money(x.price)}`).join(' · ')}` : '';
+    };
+    property.addEventListener('change', refresh);
     refresh();
   }
 
@@ -679,6 +775,10 @@
     const form = $('#record-form');
     const body = {};
     for (const f of def.fields) {
+      if (f.type === 'pricelist') {
+        if ($(`#f-${f.name}`)) body[f.name] = readPriceList(f);
+        continue;
+      }
       const input = form.elements[f.name];
       if (!input) continue;
       if (f.type === 'bool') body[f.name] = input.checked;

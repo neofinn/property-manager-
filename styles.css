@@ -275,6 +275,18 @@ dialog form { display: flex; flex-direction: column; max-height: calc(100vh - 50
 .field.invalid input, .field.invalid select, .field.invalid textarea { border-color: var(--bad); }
 .req { color: var(--bad); }
 .hint { font-size: 12px; color: var(--muted); }
+.field-label { font-size: 13px; font-weight: 600; }
+.price-rows { display: flex; flex-direction: column; gap: 6px; }
+.price-row { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr) auto; gap: 6px; align-items: center; }
+.price-row input { min-width: 0; }
+.price-head { font-size: 12px; color: var(--muted); }
+.price-head:last-child { display: none; }
+.price-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 8px; }
+@media (max-width: 560px) {
+  .price-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; }
+  .price-row > :first-child { grid-column: 1 / -1; }
+  .price-row:not(.price-head) + .price-row { border-top: 1px dashed var(--border); padding-top: 6px; }
+}
 .form-error {
   margin: 12px 20px 0;
   padding: 10px 14px;
