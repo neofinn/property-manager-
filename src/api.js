@@ -34,11 +34,11 @@ function parsePriceList(text) {
   }
 }
 
-// "2-sharing AC (4 beds): 9000; Single: 13000"
+// "2-sharing AC (4 beds): 9000; Single: 13000" (rate per bed, or rent per floor)
 function priceListText(field, text) {
   const extra = field.extra;
   return (parsePriceList(text) || [])
-    .map((p) => `${p.label}${extra && p[extra.name] != null ? ` (${p[extra.name]} ${extra.label.toLowerCase()})` : ''}: ${p.price}`)
+    .map((p) => `${p.label}${extra && p[extra.name] != null ? ` (${p[extra.name]} ${extra.unit || extra.label.toLowerCase()})` : ''}: ${p.price}`)
     .join('; ');
 }
 

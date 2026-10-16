@@ -313,7 +313,7 @@ test('PG / hostel has total beds and bed price; other types have rent, area and 
   const floors = (await call('PATCH', `/api/properties/${priced.body.id}`, { type: 'Office', floor_prices: [{ label: '1st floor', area: 2000, price: 80000 }] })).body;
   assert.deepEqual([floors.bed_prices, floors.floor_prices], [null, [{ label: '1st floor', area: 2000, price: 80000 }]]);
   const csv = (await call('GET', '/api/properties/export.csv?q=Priced')).body;
-  assert.match(csv, /1st floor \(2000 area \(sq ft\)\): 80000/);
+  assert.match(csv, /1st floor \(2000 sq ft\): 80000/);
 
   for (const type of ['Villa', 'Apartment', 'SOHO', 'Office Cabin', 'Shop']) {
     assert.equal((await call('POST', '/api/properties', { name: type, type, address: 'A' })).status, 201);
