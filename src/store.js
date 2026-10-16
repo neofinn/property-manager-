@@ -57,11 +57,48 @@ const COMPUTED_SQL = {
 // Extra columns sent with dropdown options. `parent` lets the form show only
 // the rooms of the chosen property and the beds of the chosen room.
 const OPTION_SQL = {
-  properties: 't.type AS type',
+  properties: 't.type AS type, t.bed_prices',
   rooms: "t.property_id AS parent, 'Room ' || t.room_number AS short_label, t.rent_per_bed, t.rent_per_room",
   beds: `t.room_id AS parent, t.bed_label AS short_label, t.monthly_rent, t.status, ${OCCUPANT_SQL('t.id')} AS occupant, ` +
     '(SELECT rent_per_bed FROM rooms WHERE id = t.room_id) AS room_rent_per_bed',
 };
+
+const MAX_PRICE_ROWS = 50;
+
+// A pricelist arrives as an array (or its JSON) of { label, price, <extra> }.
+// Blank rows are dropped; the result is stored as JSON text (null if empty).
+function coercePriceList(field, raw) {
+  let list = raw;
+  if (typeof raw === 'string') {
+    try {
+      list = JSON.parse(raw);
+    } catch {
+      return [null, 'must be a list of prices'];
+    }
+  }
+  if (!Array.isArray(list)) return [null, 'must be a list of prices'];
+  const extra = field.extra && field.extra.name;
+  const out = [];
+  for (const [i, item] of list.entries()) {
+    if (!item || typeof item !== 'object') return [null, `row ${i + 1} is not valid`];
+    const label = typeof item.label === 'string' || typeof item.label === 'number' ? String(item.label).trim() : '';
+    const blank = (v) => v === undefined || v === null || v === '';
+    if (!label && blank(item.price) && (!extra || blank(item[extra]))) continue;
+    if (!label) return [null, `row ${i + 1} needs a name`];
+    if (label.length > 100) return [null, `row ${i + 1} name is too long`];
+    const price = Number(item.price);
+    if (blank(item.price) || !Number.isFinite(price) || price < 0) return [null, `row ${i + 1} (${label}) needs a price of 0 or more`];
+    const row = { label, price: Math.round(price * 100) / 100 };
+    if (extra && !blank(item[extra])) {
+      const n = Number(item[extra]);
+      if (!Number.isInteger(n) || n < 0 || n > 1000000) return [null, `row ${i + 1} (${label}) ${field.extra.label} must be a whole number`];
+      row[extra] = n;
+    }
+    out.push(row);
+  }
+  if (out.length > MAX_PRICE_ROWS) return [null, `can have at most ${MAX_PRICE_ROWS} rows`];
+  return [out.length ? JSON.stringify(out) : null, null];
+}
 
 const TEXT_TYPES = new Set(['text', 'textarea', 'email', 'phone', 'select']);
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -88,6 +125,8 @@ function coerce(field, raw) {
   if (raw === null || raw === '') return [null, null];
 
   switch (field.type) {
+    case 'pricelist':
+      return coercePriceList(field, raw);
     case 'number':
     case 'money':
     case 'ref': {
@@ -176,6 +215,13 @@ class Store {
       for (const field of def.fields) {
         if (appliesTo(field, type) || errors[field.name]) continue;
         if (values[field.name] !== undefined || (existing && existing[field.name] !== null)) values[field.name] = null;
+      }
+      // Fill an empty bed count from the bed prices' bed numbers.
+      const bedPrices = values.bed_prices !== undefined ? values.bed_prices : existing ? existing.bed_prices : null;
+      const totalBeds = values.total_beds !== undefined ? values.total_beds : existing ? existing.total_beds : null;
+      if (bedPrices && totalBeds == null) {
+        const sum = JSON.parse(bedPrices).reduce((n, p) => n + (p.beds || 0), 0);
+        if (sum) values.total_beds = sum;
       }
     }
     if (resourceName === 'rooms' && !existing && values.rent_per_bed == null && values.property_id) {

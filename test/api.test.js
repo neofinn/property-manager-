@@ -299,6 +299,22 @@ test('PG / hostel has total beds and bed price; other types have rent, area and 
   assert.equal(before.total - after.total, 8, 'the 10 planned beds became the 2 real ones');
   assert.equal(before.occupied - after.occupied, 1);
 
+  // Bed prices fill an empty bed count; floor prices are for other types.
+  const priced = await call('POST', '/api/properties', {
+    name: 'Priced PG', type: 'PG / Hostel', address: 'P',
+    bed_prices: [{ label: '2-sharing AC', beds: '4', price: '9000' }, { label: '', beds: '', price: '' }, { label: 'Ground floor', beds: 6, price: 7000.456 }],
+  });
+  assert.equal(priced.status, 201);
+  assert.deepEqual(priced.body.bed_prices, [{ label: '2-sharing AC', beds: 4, price: 9000 }, { label: 'Ground floor', beds: 6, price: 7000.46 }]);
+  assert.equal(priced.body.total_beds, 10);
+  const bad = await call('POST', '/api/properties', { name: 'Bad', type: 'PG / Hostel', address: 'P', bed_prices: [{ label: 'No price' }] });
+  assert.equal(bad.status, 400);
+  assert.match(bad.body.details.bed_prices, /needs a price/);
+  const floors = (await call('PATCH', `/api/properties/${priced.body.id}`, { type: 'Office', floor_prices: [{ label: '1st floor', area: 2000, price: 80000 }] })).body;
+  assert.deepEqual([floors.bed_prices, floors.floor_prices], [null, [{ label: '1st floor', area: 2000, price: 80000 }]]);
+  const csv = (await call('GET', '/api/properties/export.csv?q=Priced')).body;
+  assert.match(csv, /1st floor \(2000 area \(sq ft\)\): 80000/);
+
   for (const type of ['Villa', 'Apartment', 'SOHO', 'Office Cabin', 'Shop']) {
     assert.equal((await call('POST', '/api/properties', { name: type, type, address: 'A' })).status, 201);
   }

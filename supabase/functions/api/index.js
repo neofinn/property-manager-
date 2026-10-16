@@ -783,11 +783,48 @@ const COMPUTED_SQL = {
 // Extra columns sent with dropdown options. `parent` lets the form show only
 // the rooms of the chosen property and the beds of the chosen room.
 const OPTION_SQL = {
-  properties: 't.type AS type',
+  properties: 't.type AS type, t.bed_prices',
   rooms: "t.property_id AS parent, 'Room ' || t.room_number AS short_label, t.rent_per_bed, t.rent_per_room",
   beds: `t.room_id AS parent, t.bed_label AS short_label, t.monthly_rent, t.status, ${OCCUPANT_SQL('t.id')} AS occupant, ` +
     '(SELECT rent_per_bed FROM rooms WHERE id = t.room_id) AS room_rent_per_bed',
 };
+
+const MAX_PRICE_ROWS = 50;
+
+// A pricelist arrives as an array (or its JSON) of { label, price, <extra> }.
+// Blank rows are dropped; the result is stored as JSON text (null if empty).
+function coercePriceList(field, raw) {
+  let list = raw;
+  if (typeof raw === 'string') {
+    try {
+      list = JSON.parse(raw);
+    } catch {
+      return [null, 'must be a list of prices'];
+    }
+  }
+  if (!Array.isArray(list)) return [null, 'must be a list of prices'];
+  const extra = field.extra && field.extra.name;
+  const out = [];
+  for (const [i, item] of list.entries()) {
+    if (!item || typeof item !== 'object') return [null, `row ${i + 1} is not valid`];
+    const label = typeof item.label === 'string' || typeof item.label === 'number' ? String(item.label).trim() : '';
+    const blank = (v) => v === undefined || v === null || v === '';
+    if (!label && blank(item.price) && (!extra || blank(item[extra]))) continue;
+    if (!label) return [null, `row ${i + 1} needs a name`];
+    if (label.length > 100) return [null, `row ${i + 1} name is too long`];
+    const price = Number(item.price);
+    if (blank(item.price) || !Number.isFinite(price) || price < 0) return [null, `row ${i + 1} (${label}) needs a price of 0 or more`];
+    const row = { label, price: Math.round(price * 100) / 100 };
+    if (extra && !blank(item[extra])) {
+      const n = Number(item[extra]);
+      if (!Number.isInteger(n) || n < 0 || n > 1000000) return [null, `row ${i + 1} (${label}) ${field.extra.label} must be a whole number`];
+      row[extra] = n;
+    }
+    out.push(row);
+  }
+  if (out.length > MAX_PRICE_ROWS) return [null, `can have at most ${MAX_PRICE_ROWS} rows`];
+  return [out.length ? JSON.stringify(out) : null, null];
+}
 
 const TEXT_TYPES = new Set(['text', 'textarea', 'email', 'phone', 'select']);
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -814,6 +851,8 @@ function coerce(field, raw) {
   if (raw === null || raw === '') return [null, null];
 
   switch (field.type) {
+    case 'pricelist':
+      return coercePriceList(field, raw);
     case 'number':
     case 'money':
     case 'ref': {
@@ -902,6 +941,13 @@ class Store {
       for (const field of def.fields) {
         if (appliesTo(field, type) || errors[field.name]) continue;
         if (values[field.name] !== undefined || (existing && existing[field.name] !== null)) values[field.name] = null;
+      }
+      // Fill an empty bed count from the bed prices' bed numbers.
+      const bedPrices = values.bed_prices !== undefined ? values.bed_prices : existing ? existing.bed_prices : null;
+      const totalBeds = values.total_beds !== undefined ? values.total_beds : existing ? existing.total_beds : null;
+      if (bedPrices && totalBeds == null) {
+        const sum = JSON.parse(bedPrices).reduce((n, p) => n + (p.beds || 0), 0);
+        if (sum) values.total_beds = sum;
       }
     }
     if (resourceName === 'rooms' && !existing && values.rent_per_bed == null && values.property_id) {
@@ -1153,7 +1199,8 @@ module.exports = { Store, HttpError, getResource, LABEL_SQL };
 // validates input from it; the browser renders lists and forms from it.
 //
 // Field types: text, textarea, email, phone, number, money, date, datetime,
-// select, ref (foreign key to another resource), bool, file.
+// select, ref (foreign key to another resource), bool, file, and pricelist
+// (rows of { label, <extra>, price }, e.g. bed or floor prices, stored as JSON).
 //
 // A ref field with `dependsOn` only offers choices that belong to the record
 // picked in that other field (e.g. beds of the chosen room).
@@ -1188,6 +1235,16 @@ const resources = {
       { name: 'city', label: 'City', type: 'text', list: true },
       { name: 'total_beds', label: 'Total beds', type: 'number', min: 0, max: 5000, showFor: BED_TYPES, hint: 'Beds you add under Rooms count too; the larger number is used' },
       { name: 'rent_per_bed', label: 'Bed price (per month)', type: 'money', min: 0, showFor: BED_TYPES, hint: 'Default price for new rooms and beds' },
+      {
+        name: 'bed_prices',
+        label: 'Bed prices',
+        type: 'pricelist',
+        showFor: BED_TYPES,
+        item: { label: 'Bed type / floor', placeholder: 'e.g. 2-sharing AC, 1st floor' },
+        extra: { name: 'beds', label: 'Beds' },
+        addLabel: '+ Add bed price',
+        hint: 'When beds cost different amounts (sharing, AC, floor…). Total beds is filled from these if left empty',
+      },
       { name: 'pg_for', label: 'PG / hostel for', type: 'select', options: ['Gents', 'Ladies', 'Co-living', 'Students', 'Working professionals', 'Family', 'Anyone'], showFor: BED_TYPES },
       { name: 'meals', label: 'Meals (mess)', type: 'select', options: ['No food', 'Breakfast only', 'Breakfast & dinner', 'All 3 meals'], showFor: BED_TYPES },
       { name: 'gate_timings', label: 'Gate / in-time', type: 'text', placeholder: 'e.g. Gate closes 10:30 pm', showFor: BED_TYPES },
@@ -1197,6 +1254,16 @@ const resources = {
       { name: 'area_sqft', label: 'Area (sq ft)', type: 'number', min: 0, hideFor: BED_TYPES },
       { name: 'furnishing', label: 'Furnishing', type: 'select', options: ['Unfurnished', 'Semi-furnished', 'Fully furnished', 'Bare shell', 'Warm shell'], hideFor: BED_TYPES },
       { name: 'monthly_rent', label: 'Expected rent', type: 'money', min: 0, list: true, hideFor: BED_TYPES },
+      {
+        name: 'floor_prices',
+        label: 'Floor / unit prices',
+        type: 'pricelist',
+        hideFor: BED_TYPES,
+        item: { label: 'Floor / unit', placeholder: 'e.g. Ground floor, Unit 2A' },
+        extra: { name: 'area', label: 'Area (sq ft)' },
+        addLabel: '+ Add floor price',
+        hint: 'When floors or units in the same building are let at different rents',
+      },
       { name: 'status', label: 'Status', type: 'select', options: ['Vacant', 'Occupied', 'Under Maintenance'], default: 'Vacant', list: true, hideFor: BED_TYPES },
       { name: 'owner_contact_id', label: 'Owner', type: 'ref', ref: 'contacts', onDelete: 'SET NULL' },
       { name: 'notes', label: 'Notes', type: 'textarea' },
@@ -2135,6 +2202,23 @@ function basename(name) {
   return String(name).split(/[\\/]/).pop();
 }
 
+function parsePriceList(text) {
+  try {
+    const list = JSON.parse(text);
+    return Array.isArray(list) ? list : null;
+  } catch {
+    return null;
+  }
+}
+
+// "2-sharing AC (4 beds): 9000; Single: 13000"
+function priceListText(field, text) {
+  const extra = field.extra;
+  return (parsePriceList(text) || [])
+    .map((p) => `${p.label}${extra && p[extra.name] != null ? ` (${p[extra.name]} ${extra.label.toLowerCase()})` : ''}: ${p.price}`)
+    .join('; ');
+}
+
 function csvCell(value) {
   if (value === null || value === undefined) return '';
   let s = String(value);
@@ -2144,6 +2228,9 @@ function csvCell(value) {
 
 function publicRow(resourceName, row) {
   const out = { ...row };
+  for (const field of getResource(resourceName).fields) {
+    if (field.type === 'pricelist' && typeof out[field.name] === 'string') out[field.name] = parsePriceList(out[field.name]);
+  }
   for (const field of fileFields(resourceName)) {
     delete out[`${field.name}_stored`];
     out[`${field.name}_url`] = row[`${field.name}_stored`] ? `/api/${resourceName}/${row.id}/${field.name}` : null;
@@ -2264,7 +2351,9 @@ async function handleTenantApi(env, req) {
     }
     cols.push('created_at', 'updated_at');
     const rows = await store.list(resourceName, { ...query, limit: 5000 });
-    const csv = [cols.join(','), ...rows.map((r) => cols.map((c) => csvCell(r[c])).join(','))].join('\r\n');
+    const priceLists = new Map(def.fields.filter((f) => f.type === 'pricelist').map((f) => [f.name, f]));
+    const cell = (r, c) => (priceLists.has(c) && r[c] ? priceListText(priceLists.get(c), r[c]) : r[c]);
+    const csv = [cols.join(','), ...rows.map((r) => cols.map((c) => csvCell(cell(r, c))).join(','))].join('\r\n');
     return {
       status: 200,
       text: csv,
@@ -2331,7 +2420,7 @@ async function loadSampleData(store) {
   await store.create('contacts', { name: 'Bright Electricals', category: 'Electrician', phone: '+91 99887 76655', available_hours: 'Daily 10am-8pm' });
 
   const p1 = await store.create('properties', { name: 'Green Park 2BHK', type: 'Apartment', area_sqft: 1150, furnishing: 'Semi-furnished', address: 'Flat 302, Green Park Residency, MG Road', city: 'Bengaluru', units: 1, monthly_rent: 25000, status: 'Occupied', owner_contact_id: owner.id });
-  const p2 = await store.create('properties', { name: 'Lake View Villa', type: 'Villa', address: '14 Lake View Road', city: 'Pune', units: 1, monthly_rent: 60000, status: 'Occupied', owner_contact_id: owner.id });
+  const p2 = await store.create('properties', { name: 'Lake View Villa', type: 'Villa', floor_prices: [{ label: 'Ground floor', area: 1800, price: 35000 }, { label: 'First floor', area: 1500, price: 25000 }], address: '14 Lake View Road', city: 'Pune', units: 1, monthly_rent: 60000, status: 'Occupied', owner_contact_id: owner.id });
   const p3 = await store.create('properties', { name: 'City Centre Shop', type: 'Shop', area_sqft: 450, furnishing: 'Bare shell', address: 'Shop 5, City Centre Mall', city: 'Bengaluru', units: 1, monthly_rent: 40000, status: 'Vacant' });
 
   const t1 = await store.create('tenants', { full_name: 'Anita Desai', phone: '+91 90000 11111', email: 'anita@example.com', property_id: p1.id, unit: '302', move_in: addDays(today, -200), id_type: 'Aadhaar', id_number: 'XXXX-XXXX-1234', status: 'Active' });
@@ -2351,7 +2440,7 @@ async function loadSampleData(store) {
   await store.create('rent_payments', { agreement_id: a2.id, period: thisMonth, amount: 30000, paid_on: today, method: 'Bank Transfer', notes: 'Half paid, rest promised next week' });
 
   // A PG let out bed-wise and a BnB let out room-wise.
-  const pg = await store.create('properties', { name: 'Sunrise PG', type: 'PG / Hostel', pg_for: 'Gents', meals: 'Breakfast & dinner', gate_timings: 'Gate closes 10:30 pm', visiting_hours: '10 am – 7 pm', warden_contact_id: warden.id, address: '22 4th Cross, Koramangala', city: 'Bengaluru', total_beds: 6, rent_per_bed: 8000, owner_contact_id: owner.id });
+  const pg = await store.create('properties', { name: 'Sunrise PG', type: 'PG / Hostel', pg_for: 'Gents', meals: 'Breakfast & dinner', gate_timings: 'Gate closes 10:30 pm', visiting_hours: '10 am – 7 pm', warden_contact_id: warden.id, address: '22 4th Cross, Koramangala', city: 'Bengaluru', total_beds: 6, rent_per_bed: 8000, bed_prices: [{ label: 'Single AC', beds: 1, price: 13000 }, { label: '2-sharing AC', beds: 2, price: 9000 }, { label: '3-sharing', beds: 3, price: 7000 }], owner_contact_id: owner.id });
   const r101 = await store.create('rooms', { property_id: pg.id, room_number: '101', floor: '1', sharing: 'Double', total_beds: 2, rent_per_bed: 9000, ac: true, attached_bath: true });
   await store.create('rooms', { property_id: pg.id, room_number: '102', floor: '1', sharing: 'Triple', total_beds: 3, rent_per_bed: 7000, attached_bath: true });
   await store.create('rooms', { property_id: pg.id, room_number: '201', floor: '2', sharing: 'Single', total_beds: 1, rent_per_bed: 13000, ac: true });

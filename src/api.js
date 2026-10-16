@@ -25,6 +25,23 @@ function basename(name) {
   return String(name).split(/[\\/]/).pop();
 }
 
+function parsePriceList(text) {
+  try {
+    const list = JSON.parse(text);
+    return Array.isArray(list) ? list : null;
+  } catch {
+    return null;
+  }
+}
+
+// "2-sharing AC (4 beds): 9000; Single: 13000"
+function priceListText(field, text) {
+  const extra = field.extra;
+  return (parsePriceList(text) || [])
+    .map((p) => `${p.label}${extra && p[extra.name] != null ? ` (${p[extra.name]} ${extra.label.toLowerCase()})` : ''}: ${p.price}`)
+    .join('; ');
+}
+
 function csvCell(value) {
   if (value === null || value === undefined) return '';
   let s = String(value);
@@ -34,6 +51,9 @@ function csvCell(value) {
 
 function publicRow(resourceName, row) {
   const out = { ...row };
+  for (const field of getResource(resourceName).fields) {
+    if (field.type === 'pricelist' && typeof out[field.name] === 'string') out[field.name] = parsePriceList(out[field.name]);
+  }
   for (const field of fileFields(resourceName)) {
     delete out[`${field.name}_stored`];
     out[`${field.name}_url`] = row[`${field.name}_stored`] ? `/api/${resourceName}/${row.id}/${field.name}` : null;
@@ -154,7 +174,9 @@ async function handleTenantApi(env, req) {
     }
     cols.push('created_at', 'updated_at');
     const rows = await store.list(resourceName, { ...query, limit: 5000 });
-    const csv = [cols.join(','), ...rows.map((r) => cols.map((c) => csvCell(r[c])).join(','))].join('\r\n');
+    const priceLists = new Map(def.fields.filter((f) => f.type === 'pricelist').map((f) => [f.name, f]));
+    const cell = (r, c) => (priceLists.has(c) && r[c] ? priceListText(priceLists.get(c), r[c]) : r[c]);
+    const csv = [cols.join(','), ...rows.map((r) => cols.map((c) => csvCell(cell(r, c))).join(','))].join('\r\n');
     return {
       status: 200,
       text: csv,

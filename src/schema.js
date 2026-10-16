@@ -4,7 +4,8 @@
 // validates input from it; the browser renders lists and forms from it.
 //
 // Field types: text, textarea, email, phone, number, money, date, datetime,
-// select, ref (foreign key to another resource), bool, file.
+// select, ref (foreign key to another resource), bool, file, and pricelist
+// (rows of { label, <extra>, price }, e.g. bed or floor prices, stored as JSON).
 //
 // A ref field with `dependsOn` only offers choices that belong to the record
 // picked in that other field (e.g. beds of the chosen room).
@@ -39,6 +40,16 @@ const resources = {
       { name: 'city', label: 'City', type: 'text', list: true },
       { name: 'total_beds', label: 'Total beds', type: 'number', min: 0, max: 5000, showFor: BED_TYPES, hint: 'Beds you add under Rooms count too; the larger number is used' },
       { name: 'rent_per_bed', label: 'Bed price (per month)', type: 'money', min: 0, showFor: BED_TYPES, hint: 'Default price for new rooms and beds' },
+      {
+        name: 'bed_prices',
+        label: 'Bed prices',
+        type: 'pricelist',
+        showFor: BED_TYPES,
+        item: { label: 'Bed type / floor', placeholder: 'e.g. 2-sharing AC, 1st floor' },
+        extra: { name: 'beds', label: 'Beds' },
+        addLabel: '+ Add bed price',
+        hint: 'When beds cost different amounts (sharing, AC, floor…). Total beds is filled from these if left empty',
+      },
       { name: 'pg_for', label: 'PG / hostel for', type: 'select', options: ['Gents', 'Ladies', 'Co-living', 'Students', 'Working professionals', 'Family', 'Anyone'], showFor: BED_TYPES },
       { name: 'meals', label: 'Meals (mess)', type: 'select', options: ['No food', 'Breakfast only', 'Breakfast & dinner', 'All 3 meals'], showFor: BED_TYPES },
       { name: 'gate_timings', label: 'Gate / in-time', type: 'text', placeholder: 'e.g. Gate closes 10:30 pm', showFor: BED_TYPES },
@@ -48,6 +59,16 @@ const resources = {
       { name: 'area_sqft', label: 'Area (sq ft)', type: 'number', min: 0, hideFor: BED_TYPES },
       { name: 'furnishing', label: 'Furnishing', type: 'select', options: ['Unfurnished', 'Semi-furnished', 'Fully furnished', 'Bare shell', 'Warm shell'], hideFor: BED_TYPES },
       { name: 'monthly_rent', label: 'Expected rent', type: 'money', min: 0, list: true, hideFor: BED_TYPES },
+      {
+        name: 'floor_prices',
+        label: 'Floor / unit prices',
+        type: 'pricelist',
+        hideFor: BED_TYPES,
+        item: { label: 'Floor / unit', placeholder: 'e.g. Ground floor, Unit 2A' },
+        extra: { name: 'area', label: 'Area (sq ft)' },
+        addLabel: '+ Add floor price',
+        hint: 'When floors or units in the same building are let at different rents',
+      },
       { name: 'status', label: 'Status', type: 'select', options: ['Vacant', 'Occupied', 'Under Maintenance'], default: 'Vacant', list: true, hideFor: BED_TYPES },
       { name: 'owner_contact_id', label: 'Owner', type: 'ref', ref: 'contacts', onDelete: 'SET NULL' },
       { name: 'notes', label: 'Notes', type: 'textarea' },
