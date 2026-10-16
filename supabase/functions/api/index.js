@@ -8,8 +8,6 @@ import nodeProcess from "node:process";
 
 globalThis.Buffer ??= Buffer;
 globalThis.process ??= nodeProcess;
-// Each warm function instance keeps a few database connections open.
-process.env.DATABASE_POOL_SIZE ||= "3";
 
 const modules = { pg, "node:fs": nodeFs, "node:path": nodePath, "node:crypto": nodeCrypto };
 const externalRequire = (spec) => {
@@ -52,6 +50,7 @@ function createEdgeHandler(options) {
     defaultCountryCode: options.defaultCountryCode || '91',
     inviteCode: options.inviteCode || '',
     adminPassword: options.adminPassword || '',
+    poolSize: options.poolSize,
   });
   const ready = platform.init();
   const currency = options.currency || 'INR';
@@ -266,7 +265,7 @@ function createLock() {
 const SETTINGS_DEFAULTS = { signups_open: '1', invite_code: '', notice: '', read_only: '0' };
 
 class Platform {
-  constructor({ dataDir, databaseUrl, defaultCountryCode = '91', inviteCode = '', adminPassword = '' }) {
+  constructor({ dataDir, databaseUrl, defaultCountryCode = '91', inviteCode = '', adminPassword = '', poolSize }) {
     this.dataDir = dataDir;
     this.defaultCountryCode = defaultCountryCode;
     this.envInviteCode = inviteCode;
@@ -276,7 +275,7 @@ class Platform {
     this.readyTenants = new Set(); // Postgres: schemas already migrated by this process
     this.tenantInit = new Map(); // Postgres: companyId -> migration in progress
     if (databaseUrl) {
-      this.pool = createPool(databaseUrl);
+      this.pool = createPool(databaseUrl, { poolSize });
       this.db = new PostgresDatabase(this.pool);
       this.storage = 'postgres';
     } else {
@@ -1956,7 +1955,7 @@ function numbered(sql) {
   return sql.replace(/\?/g, () => `$${++n}`);
 }
 
-function createPool(connectionString) {
+function createPool(connectionString, { poolSize } = {}) {
   const pg = require('pg');
   // Counts and sums come back as int8/numeric strings; the app expects numbers.
   pg.types.setTypeParser(20, (v) => Number(v));
@@ -1964,7 +1963,7 @@ function createPool(connectionString) {
   const local = /@(localhost|127\.0\.0\.1)[:/]/.test(connectionString);
   const pool = new pg.Pool({
     connectionString,
-    max: Number(process.env.DATABASE_POOL_SIZE) || 10,
+    max: poolSize || Number(process.env.DATABASE_POOL_SIZE) || 10,
     idleTimeoutMillis: 30000,
     // Supabase requires TLS; its certificate chain is not in Node's default store.
     ssl: local || /sslmode=disable/.test(connectionString) ? false : { rejectUnauthorized: false },
@@ -2436,6 +2435,8 @@ const handler = createEdgeHandler({
   databaseUrl: Deno.env.get("SUPABASE_DB_URL"),
   adminPassword: Deno.env.get("ADMIN_PASSWORD") || "",
   inviteCode: Deno.env.get("BETA_INVITE_CODE") || "",
+  // Each warm function instance keeps a few database connections open.
+  poolSize: 3,
   allowedOrigins: (Deno.env.get("ALLOWED_ORIGINS") || "https://neofinn.github.io").split(",").map((s) => s.trim()),
 });
 

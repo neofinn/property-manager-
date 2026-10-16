@@ -27,8 +27,6 @@ import nodeProcess from "node:process";
 
 globalThis.Buffer ??= Buffer;
 globalThis.process ??= nodeProcess;
-// Each warm function instance keeps a few database connections open.
-process.env.DATABASE_POOL_SIZE ||= "3";
 
 const modules = { pg, "node:fs": nodeFs, "node:path": nodePath, "node:crypto": nodeCrypto };
 const externalRequire = (spec) => {
@@ -42,6 +40,8 @@ const handler = createEdgeHandler({
   databaseUrl: Deno.env.get("SUPABASE_DB_URL"),
   adminPassword: Deno.env.get("ADMIN_PASSWORD") || "",
   inviteCode: Deno.env.get("BETA_INVITE_CODE") || "",
+  // Each warm function instance keeps a few database connections open.
+  poolSize: 3,
   allowedOrigins: (Deno.env.get("ALLOWED_ORIGINS") || "https://neofinn.github.io").split(",").map((s) => s.trim()),
 });
 

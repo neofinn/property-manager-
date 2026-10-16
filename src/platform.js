@@ -69,7 +69,7 @@ function createLock() {
 const SETTINGS_DEFAULTS = { signups_open: '1', invite_code: '', notice: '', read_only: '0' };
 
 class Platform {
-  constructor({ dataDir, databaseUrl, defaultCountryCode = '91', inviteCode = '', adminPassword = '' }) {
+  constructor({ dataDir, databaseUrl, defaultCountryCode = '91', inviteCode = '', adminPassword = '', poolSize }) {
     this.dataDir = dataDir;
     this.defaultCountryCode = defaultCountryCode;
     this.envInviteCode = inviteCode;
@@ -79,7 +79,7 @@ class Platform {
     this.readyTenants = new Set(); // Postgres: schemas already migrated by this process
     this.tenantInit = new Map(); // Postgres: companyId -> migration in progress
     if (databaseUrl) {
-      this.pool = createPool(databaseUrl);
+      this.pool = createPool(databaseUrl, { poolSize });
       this.db = new PostgresDatabase(this.pool);
       this.storage = 'postgres';
     } else {

@@ -13,7 +13,7 @@ function numbered(sql) {
   return sql.replace(/\?/g, () => `$${++n}`);
 }
 
-function createPool(connectionString) {
+function createPool(connectionString, { poolSize } = {}) {
   const pg = require('pg');
   // Counts and sums come back as int8/numeric strings; the app expects numbers.
   pg.types.setTypeParser(20, (v) => Number(v));
@@ -21,7 +21,7 @@ function createPool(connectionString) {
   const local = /@(localhost|127\.0\.0\.1)[:/]/.test(connectionString);
   const pool = new pg.Pool({
     connectionString,
-    max: Number(process.env.DATABASE_POOL_SIZE) || 10,
+    max: poolSize || Number(process.env.DATABASE_POOL_SIZE) || 10,
     idleTimeoutMillis: 30000,
     // Supabase requires TLS; its certificate chain is not in Node's default store.
     ssl: local || /sslmode=disable/.test(connectionString) ? false : { rejectUnauthorized: false },

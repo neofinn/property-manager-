@@ -31,6 +31,7 @@ function createEdgeHandler(options) {
     defaultCountryCode: options.defaultCountryCode || '91',
     inviteCode: options.inviteCode || '',
     adminPassword: options.adminPassword || '',
+    poolSize: options.poolSize,
   });
   const ready = platform.init();
   const currency = options.currency || 'INR';
