@@ -121,6 +121,34 @@ the database, so the server needs no disk and can restart freely. Without it,
 data is stored under `/data`, which then needs a **persistent volume**. Serve it
 over **HTTPS**, which every host below does for you.
 
+### Live: GitHub Pages + Supabase (current hosting)
+
+The beta runs at **https://neofinn.github.io/property-manager-/** with no server
+to manage:
+
+- **Pages** (`dist-pages/`, built by `npm run build:pages`) are published on the
+  `gh-pages` branch, which GitHub Pages serves.
+- **API** runs as the Supabase Edge Function `api` in the *Property Manager*
+  project. `npm run build:edge` bundles `src/` into
+  `supabase/functions/api/index.js`; the deployed function is a one-line loader
+  that imports that file from this repository at a fixed commit.
+- **Data** is in the same Supabase project's Postgres (connection provided to the
+  function automatically as `SUPABASE_DB_URL`).
+- **Admin page:** `https://neofinn.github.io/property-manager-/admin.html`. It works once
+  the function secret `ADMIN_PASSWORD` is set (Supabase → Edge Functions → Secrets).
+
+Because pages and API are on different sites, logins use a token in a request
+header (`X-Session` / `X-Admin-Session`, kept in the browser's storage) instead
+of a cookie, and the function only accepts the page origin set in
+`ALLOWED_ORIGINS` (default `https://neofinn.github.io`).
+
+To ship a change:
+
+1. `npm run build:edge`, commit and push, then redeploy the `api` function with
+   its import pointing at the new commit SHA.
+2. `npm run build:pages` and replace the contents of the `gh-pages` branch with
+   `dist-pages/`.
+
 ### claude.ai demo link (no server needed)
 
 `npm install && npm run build:demo` builds `dist/property-manager-demo.html`,
@@ -230,6 +258,9 @@ src/admin.js         /api/admin routes
 src/files.js         Uploaded documents, stored in the company's database
 src/sample.js        Sample data
 src/browser/         The in-page backend for the claude.ai demo
+src/edge/            The API as a Supabase Edge Function handler
+supabase/functions/  Built Edge Function (npm run build:edge)
+public/api-client.js Sends /api calls to the Edge Function when hosted on static pages
 public/              Single-page web app (vanilla JS, no build step), sign-in page, admin page, installable-app files
 scripts/             Demo account (seed) and feedback report
 Dockerfile, render.yaml  Deployment
