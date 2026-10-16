@@ -76,7 +76,7 @@
   if (window.PM_DEMO) {
     window.PM_showAuth = show;
   } else {
-    show(location.pathname === '/signup' ? 'signup' : 'login');
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+    show(/\/signup(\.html)?$/.test(location.pathname) ? 'signup' : 'login');
+    if ('serviceWorker' in navigator && !window.PM_API_BASE) navigator.serviceWorker.register('/sw.js').catch(() => {});
   }
 })();

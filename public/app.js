@@ -805,7 +805,7 @@
     }
   });
 
-  if ('serviceWorker' in navigator && !window.PM_DEMO) navigator.serviceWorker.register('/sw.js').catch(() => {});
+  if ('serviceWorker' in navigator && !window.PM_DEMO && !window.PM_API_BASE) navigator.serviceWorker.register('/sw.js').catch(() => {});
   $('#dialog').addEventListener('cancel', () => closeDialog());
   $('#menu-btn').addEventListener('click', () => document.body.classList.toggle('nav-open'));
   window.addEventListener('hashchange', route);

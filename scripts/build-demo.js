@@ -7,47 +7,10 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { bundle } = require('./bundle');
 
 const root = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(root, rel), 'utf8');
-
-// A tiny CommonJS bundler: follows relative require() calls from the entry
-// file. Node built-ins resolve to empty stubs; the browser code never calls them.
-function bundle(entry) {
-  const modules = new Map();
-  const visit = (file) => {
-    if (modules.has(file)) return;
-    const source = fs.readFileSync(file, 'utf8');
-    const deps = {};
-    modules.set(file, { source, deps });
-    for (const [, spec] of source.matchAll(/require\('([^']+)'\)/g)) {
-      if (!spec.startsWith('.')) continue;
-      const resolved = path.resolve(path.dirname(file), spec.endsWith('.js') ? spec : `${spec}.js`);
-      deps[spec] = path.relative(root, resolved);
-      visit(resolved);
-    }
-  };
-  visit(path.join(root, entry));
-
-  const defs = [...modules].map(([file, { source, deps }]) => {
-    const id = JSON.stringify(path.relative(root, file));
-    return `${id}: [function (module, exports, require) {\n${source}\n}, ${JSON.stringify(deps)}]`;
-  });
-  return `(function () {
-  var defs = {${defs.join(',\n')}};
-  var cache = {};
-  function load(id) {
-    if (cache[id]) return cache[id].exports;
-    var module = (cache[id] = { exports: {} });
-    var def = defs[id];
-    def[0](module, module.exports, function (spec) {
-      return spec in def[1] ? load(def[1][spec]) : {};
-    });
-    return module.exports;
-  }
-  load(${JSON.stringify(entry)});
-})();`;
-}
 
 // Inline scripts must not contain a literal closing script tag.
 const safeScript = (js) => js.replace(/<\/script/gi, '<\\/script');
@@ -98,7 +61,7 @@ ${appBody.replace('<span class="account-name" id="account-name"></span>', '<span
 <script>window.PM_SQL_WASM = "${wasm}";</script>
 <script>${safeScript(read('public/app.js'))}</script>
 <script>${safeScript(read('public/auth.js'))}</script>
-<script>${safeScript(bundle('src/browser/demo-shell.js'))}</script>
+<script>${safeScript(bundle('src/browser/demo-shell.js'))};</script>
 `;
 
 fs.mkdirSync(path.join(root, 'dist'), { recursive: true });

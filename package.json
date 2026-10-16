@@ -12,7 +12,9 @@
     "seed": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env scripts/seed.js",
     "test": "node --disable-warning=ExperimentalWarning --test test/*.test.js",
     "feedback": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env scripts/feedback.js",
-    "build:demo": "node scripts/build-demo.js"
+    "build:demo": "node scripts/build-demo.js",
+    "build:edge": "node scripts/build-edge.js",
+    "build:pages": "node scripts/build-pages.js"
   },
   "license": "MIT",
   "devDependencies": {
