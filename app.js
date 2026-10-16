@@ -23,12 +23,33 @@
   ];
 
   const SHARED_TYPES = ['PG / Hostel', 'BnB'];
+  const BED_TYPES = ['PG / Hostel'];
+
+  // Same rule as src/schema.js: is this property field used for this type?
+  const appliesTo = (field, type) => (field.showFor ? field.showFor.includes(type) : field.hideFor ? !field.hideFor.includes(type) : true);
+
+  // Total / occupied / vacant beds of a property (same rule as the dashboard).
+  function bedStats(p) {
+    const bedType = BED_TYPES.includes(p.type);
+    const total = Math.max(bedType ? p.total_beds || 0 : 0, p.bed_count || 0);
+    const occupied = Math.min(bedType ? Math.max(p.tenant_count || 0, p.occupied_beds || 0) : p.occupied_beds || 0, total);
+    return { total, occupied, vacant: total - occupied };
+  }
+
+  function bedSummary(p) {
+    const s = bedStats(p);
+    if (!s.total) return '<span class="muted">No beds yet</span>';
+    return `${s.total} bed${s.total === 1 ? '' : 's'} · ${s.occupied} occupied · <span class="pill ${s.vacant ? 'good' : 'warn'}">${s.vacant ? `${s.vacant} vacant` : 'Full'}</span>`;
+  }
 
   // Read-only columns the server computes, shown after the regular list columns.
   const COMPUTED_COLUMNS = {
     properties: [{
       label: 'Rooms / beds',
-      render: (r) => (r.room_count ? `${r.room_count} room${r.room_count === 1 ? '' : 's'}${r.bed_count ? ` · ${occupancyText(r.occupied_beds, r.bed_count)}` : ''}` : '<span class="muted">—</span>'),
+      render: (r) => {
+        if (BED_TYPES.includes(r.type)) return `${bedSummary(r)}${r.room_count ? `<div class="muted small">${r.room_count} room${r.room_count === 1 ? '' : 's'}</div>` : ''}`;
+        return r.room_count ? `${r.room_count} room${r.room_count === 1 ? '' : 's'}${r.bed_count ? ` · ${occupancyText(r.occupied_beds, r.bed_count)}` : ''}` : '<span class="muted">—</span>';
+      },
     }],
     rooms: [{ label: 'Occupancy', render: (r) => (r.bed_count ? occupancyText(r.occupied_beds, r.bed_count) : `${r.tenant_count} tenant${r.tenant_count === 1 ? '' : 's'}`) }],
     beds: [{
@@ -236,7 +257,7 @@
         </section>` : ''}
       <section class="stats">
         ${stat('Properties', d.counts.properties, `${d.occupancy.occupied} occupied · ${d.occupancy.total - d.occupancy.occupied} vacant`, '#/properties')}
-        ${d.beds.total ? stat('PG / hostel beds', `${d.beds.occupied}/${d.beds.total}`, `${d.beds.total - d.beds.occupied} vacant · ${d.beds.rooms} rooms`, '#/bedboard') : ''}
+        ${d.beds.total ? stat('PG / hostel beds', `${d.beds.occupied}/${d.beds.total}`, `${d.beds.vacant} vacant · ${d.beds.occupied} occupied`, '#/bedboard') : ''}
         ${stat('Active tenants', d.counts.tenants, `${d.counts.agreements} active agreements`, '#/tenants')}
         ${stat(`Rent collected (${fmtMonth(d.period)})`, money(r.collected_this_month), `of ${money(r.expected_this_month)} expected · ${pct}%`, '#/rent_payments')}
         ${stat('Overdue rent', money(r.overdue_total), `${r.overdue_count} payment${r.overdue_count === 1 ? '' : 's'} pending`, '#/reminders')}
@@ -384,7 +405,7 @@
             <div class="page-head">
               <h3>${esc(p.name)} <span class="pill">${esc(p.type || '')}</span>${p.pg_for ? ` <span class="pill">${esc(p.pg_for)}</span>` : ''}${p.meals && p.meals !== 'No food' ? ` <span class="pill">🍽 ${esc(p.meals)}</span>` : ''}</h3>
               <div class="head-actions">
-                <span class="muted">${p.bed_count ? occupancyText(p.occupied_beds, p.bed_count) : 'No beds yet'}</span>
+                <span class="muted">${BED_TYPES.includes(p.type) ? `${bedSummary(p)}${p.rent_per_bed != null ? ` · ${esc(money(p.rent_per_bed))} / bed` : ''}` : p.bed_count ? occupancyText(p.occupied_beds, p.bed_count) : 'No beds yet'}</span>
                 <a class="btn small primary" href="#/rooms?property_id=${p.id}">Manage rooms</a>
               </div>
             </div>
@@ -399,6 +420,7 @@
                   <div class="beds">${rBeds.length ? rBeds.map((b) => bedChip(b, r, p)).join('') : `<span class="muted small">No beds · ${r.tenant_count} tenant${r.tenant_count === 1 ? '' : 's'}</span>`}</div>
                 </div>`;
             }).join('')}</div>` : `<p class="muted">No rooms added yet. <a href="#/rooms?property_id=${p.id}">Add rooms</a> to track beds.</p>`}
+            ${(p.total_beds || 0) > (p.bed_count || 0) && p.bed_count ? `<p class="muted small">${p.total_beds - p.bed_count} of ${p.total_beds} beds aren't in a room yet.</p>` : ''}
           </section>`;
       }).join('') : `<div class="empty card"><p>No PG, hostel or BnB properties yet. Add a property with type <strong>PG / Hostel</strong> or <strong>BnB</strong>, then add its rooms.</p><a class="btn primary" href="#/properties">Go to properties</a></div>`}
     `;
@@ -440,7 +462,7 @@
           <tbody>
             ${rows.map((row) => `
               <tr data-id="${row.id}">
-                ${listFields.map((f) => `<td data-label="${esc(f.label)}">${formatCell(f, row)}</td>`).join('')}
+                ${listFields.map((f) => `<td data-label="${esc(f.label)}">${listCell(name, f, row)}</td>`).join('')}
                 ${computed.map((c) => `<td data-label="${esc(c.label)}">${c.render(row)}</td>`).join('')}
                 <td class="actions-col">${rowActions(name, row)}</td>
               </tr>`).join('')}
@@ -477,6 +499,20 @@
       const row = rows.find((r) => String(r.id) === query.id) || (await api(`${name}/${query.id}`).catch(() => null));
       if (row) openForm(name, row);
     }
+  }
+
+  // A PG / hostel has no whole-property rent or status: show its bed price
+  // and vacant beds in those columns instead.
+  function listCell(name, f, row) {
+    if (name === 'properties' && !appliesTo(f, row.type)) {
+      if (f.name === 'monthly_rent') return row.rent_per_bed != null ? `${esc(money(row.rent_per_bed))} <span class="muted small">/ bed</span>` : '';
+      if (f.name === 'status') {
+        const s = bedStats(row);
+        return s.total ? `<span class="pill ${s.vacant ? 'good' : 'warn'}">${s.vacant ? `${s.vacant} bed${s.vacant === 1 ? '' : 's'} vacant` : 'Full'}</span>` : '';
+      }
+      return '';
+    }
+    return formatCell(f, row);
   }
 
   function rowActions(name, row) {
@@ -559,10 +595,26 @@
     }
     $('#form-fields').innerHTML = inputs.join('');
     wireDependentSelects(name);
+    wireTypeFields(def);
     const dialog = $('#dialog');
     if (!dialog.open) dialog.showModal();
     const first = $('#form-fields input:not([type=checkbox]), #form-fields select, #form-fields textarea');
     if (first) first.focus();
+  }
+
+  // Property forms show only the fields for the chosen type: beds and bed
+  // price for a PG / hostel; area, furnishing, rent and status for the rest.
+  function wireTypeFields(def) {
+    const type = $('#record-form').elements.type;
+    if (!type || !def.fields.some((f) => f.showFor || f.hideFor)) return;
+    const refresh = () => {
+      for (const f of def.fields) {
+        const box = $(`#f-${f.name}`)?.closest('.field');
+        if (box) box.hidden = !appliesTo(f, type.value);
+      }
+    };
+    type.addEventListener('change', refresh);
+    refresh();
   }
 
   // Room and bed dropdowns only list rooms of the chosen property and beds of
