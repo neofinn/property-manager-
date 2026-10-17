@@ -3,7 +3,7 @@
 // Makes the app installable and lets the shell open quickly on a phone.
 // API requests are never cached: data always comes fresh from the server.
 
-const CACHE = 'pm-shell-v1';
+const CACHE = 'pgm-shell-v1';
 const SHELL = ['/styles.css', '/app.js', '/auth.js', '/favicon.svg', '/icon-192.png'];
 
 self.addEventListener('install', (event) => {

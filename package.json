@@ -1,7 +1,7 @@
 {
-  "name": "property-manager",
+  "name": "pg-manager",
   "version": "1.0.0",
-  "description": "Property manager CRM: properties, tenants, agreements, rent, bills, contacts, verified documents, timings and rent reminders.",
+  "description": "PG Manager: beds, guests, rent, expenses, documents and reminders for PGs and hostels.",
   "private": true,
   "main": "server.js",
   "engines": {

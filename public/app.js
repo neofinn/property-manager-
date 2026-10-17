@@ -8,32 +8,27 @@
 
   const NAV = [
     { id: 'dashboard', label: 'Dashboard', icon: '◧' },
-    { id: 'reminders', label: 'Reminders', icon: '⏰' },
-    { id: 'properties', icon: '⌂' },
     { id: 'bedboard', label: 'Bed board', icon: '▦' },
-    { id: 'rooms', icon: '⊞' },
+    { id: 'reminders', label: 'Reminders', icon: '⏰' },
+    { id: 'guests', icon: '☺' },
+    { id: 'pgs', icon: '⌂' },
     { id: 'beds', icon: '⌸' },
-    { id: 'tenants', icon: '☺' },
-    { id: 'agreements', icon: '✎' },
-    { id: 'rent_payments', icon: '₹' },
+    { id: 'payments', icon: '₹' },
     { id: 'bills', icon: '≣' },
     { id: 'documents', icon: '❏' },
     { id: 'contacts', icon: '☎' },
-    { id: 'schedules', icon: '◷' },
   ];
 
-  const SHARED_TYPES = ['PG / Hostel', 'BnB'];
-  const BED_TYPES = ['PG / Hostel'];
+  // PG Manager fields don't depend on a type; kept for the shared form code.
+  const appliesTo = () => true;
 
-  // Same rule as src/schema.js: is this property field used for this type?
-  const appliesTo = (field, type) => (field.showFor ? field.showFor.includes(type) : field.hideFor ? !field.hideFor.includes(type) : true);
-
-  // Total / occupied / vacant beds of a property (same rule as the dashboard).
+  // Beds of a PG: every bed is occupied, booked, out of use or vacant.
   function bedStats(p) {
-    const bedType = BED_TYPES.includes(p.type);
-    const total = Math.max(bedType ? p.total_beds || 0 : 0, p.bed_count || 0);
-    const occupied = Math.min(bedType ? Math.max(p.tenant_count || 0, p.occupied_beds || 0) : p.occupied_beds || 0, total);
-    return { total, occupied, vacant: total - occupied };
+    const total = p.bed_count || 0;
+    const occupied = p.occupied_beds || 0;
+    const booked = p.booked_beds || 0;
+    const blocked = p.blocked_beds || 0;
+    return { total, occupied, booked, blocked, vacant: Math.max(total - occupied - booked - blocked, 0) };
   }
 
   const priceList = (v) => {
@@ -58,29 +53,22 @@
   function bedSummary(p) {
     const s = bedStats(p);
     if (!s.total) return '<span class="muted">No beds yet</span>';
-    return `${s.total} bed${s.total === 1 ? '' : 's'} · ${s.occupied} occupied · <span class="pill ${s.vacant ? 'good' : 'warn'}">${s.vacant ? `${s.vacant} vacant` : 'Full'}</span>`;
+    return `${s.total} bed${s.total === 1 ? '' : 's'} · ${s.occupied} occupied${s.booked ? ` · ${s.booked} booked` : ''} · <span class="pill ${s.vacant ? 'good' : 'warn'}">${s.vacant ? `${s.vacant} vacant` : 'Full'}</span>`;
   }
 
   // Read-only columns the server computes, shown after the regular list columns.
   const COMPUTED_COLUMNS = {
-    properties: [{
-      label: 'Rooms / beds',
-      render: (r) => {
-        if (BED_TYPES.includes(r.type)) return `${bedSummary(r)}${r.room_count ? `<div class="muted small">${r.room_count} room${r.room_count === 1 ? '' : 's'}</div>` : ''}`;
-        return r.room_count ? `${r.room_count} room${r.room_count === 1 ? '' : 's'}${r.bed_count ? ` · ${occupancyText(r.occupied_beds, r.bed_count)}` : ''}` : '<span class="muted">—</span>';
-      },
-    }],
-    rooms: [{ label: 'Occupancy', render: (r) => (r.bed_count ? occupancyText(r.occupied_beds, r.bed_count) : `${r.tenant_count} tenant${r.tenant_count === 1 ? '' : 's'}`) }],
+    pgs: [
+      { label: 'Beds', render: (r) => bedSummary(r) },
+      { label: 'Rates', render: (r) => esc(priceRange(r.bed_prices) || (r.rent_per_bed != null ? money(r.rent_per_bed) : '')) },
+    ],
     beds: [{
-      label: 'Occupant',
-      render: (r) => (r.occupant ? `<a href="#/tenants?id=${r.occupant_id}">${esc(r.occupant)}</a>` : '<span class="pill good">Vacant</span>'),
+      label: 'Guest',
+      render: (r) => (r.guest_name
+        ? `<a href="#/guests?id=${r.guest_id}">${esc(r.guest_name)}</a>${r.guest_status === 'Booked' ? ' <span class="pill warn">Booked</span>' : ''}`
+        : r.status === 'Available' ? '<span class="pill good">Vacant</span>' : ''),
     }],
   };
-
-  function occupancyText(occupied, total) {
-    const free = total - occupied;
-    return `${occupied}/${total} beds filled${free ? ` · <strong>${free} free</strong>` : ''}`;
-  }
 
   // ---------- helpers ----------
 
@@ -213,9 +201,9 @@
   }
 
   function pillClass(v) {
-    if (['Active', 'Occupied', 'Paid', 'Done'].includes(v)) return 'good';
-    if (['Unpaid', 'Expired', 'Terminated', 'Cancelled', 'Under Maintenance'].includes(v)) return 'bad';
-    if (['Vacant', 'Draft', 'Prospective', 'Scheduled'].includes(v)) return 'warn';
+    if (['Active', 'Available', 'Paid'].includes(v)) return 'good';
+    if (['Unpaid', 'Under Maintenance', 'Blocked'].includes(v)) return 'bad';
+    if (['Booked'].includes(v)) return 'warn';
     return '';
   }
 
@@ -262,26 +250,27 @@
   async function renderDashboard(main) {
     const d = await api('dashboard');
     const r = d.rent;
+    const b = d.beds;
     const pct = r.expected_this_month ? Math.round((r.collected_this_month / r.expected_this_month) * 100) : 0;
+    const occ = b.total ? Math.round((b.occupied / b.total) * 100) : 0;
     main.innerHTML = `
       <div class="page-head"><h2>Dashboard</h2><span class="muted">${esc(fmtDate(d.today))}</span></div>
-      ${d.counts.properties === 0 ? `
+      ${d.counts.pgs === 0 ? `
         <section class="card welcome">
           <h3>Welcome, ${esc(state.config.company.manager_name)}!</h3>
-          <p>Start by adding your first property, or load sample data to explore every feature (an apartment, a villa, a PG with rooms and beds, and a BnB). You can delete the sample records later.</p>
+          <p>Add your PG with its total beds and bed prices (qty × rate) and the beds are created for you. Then check guests into vacant beds from the bed board. Or load sample data to explore first; you can delete it later.</p>
           <div class="head-actions">
-            <a class="btn primary" href="#/properties?new=1">+ Add property</a>
+            <a class="btn primary" href="#/pgs?new=1">+ Add PG</a>
             <button class="btn" data-action="load-sample">Load sample data</button>
           </div>
         </section>` : ''}
       <section class="stats">
-        ${stat('Properties', d.counts.properties, `${d.occupancy.occupied} occupied · ${d.occupancy.total - d.occupancy.occupied} vacant`, '#/properties')}
-        ${d.beds.total ? stat('PG / hostel beds', `${d.beds.occupied}/${d.beds.total}`, `${d.beds.vacant} vacant · ${d.beds.occupied} occupied`, '#/bedboard') : ''}
-        ${stat('Active tenants', d.counts.tenants, `${d.counts.agreements} active agreements`, '#/tenants')}
-        ${stat(`Rent collected (${fmtMonth(d.period)})`, money(r.collected_this_month), `of ${money(r.expected_this_month)} expected · ${pct}%`, '#/rent_payments')}
+        ${stat('Beds occupied', `${b.occupied}/${b.total}`, `${occ}% · ${b.vacant} vacant${b.booked ? ` · ${b.booked} booked` : ''}`, '#/bedboard')}
+        ${stat('Active guests', d.counts.guests, `${d.counts.booked} booking${d.counts.booked === 1 ? '' : 's'} · ${d.counts.pgs} PG${d.counts.pgs === 1 ? '' : 's'}`, '#/guests?status=Active')}
+        ${stat(`Rent collected (${fmtMonth(d.period)})`, money(r.collected_this_month), `of ${money(r.expected_this_month)} expected · ${pct}%`, '#/payments')}
         ${stat('Overdue rent', money(r.overdue_total), `${r.overdue_count} payment${r.overdue_count === 1 ? '' : 's'} pending`, '#/reminders')}
-        ${stat('Unpaid bills', money(d.bills_unpaid_total), `${d.counts.unpaid_bills} bill${d.counts.unpaid_bills === 1 ? '' : 's'}`, '#/bills?status=Unpaid')}
-        ${stat('Documents', d.counts.documents, `${d.reminders.documents_unverified.length} awaiting verification`, '#/documents')}
+        ${stat('Deposits held', money(d.deposits_held), 'from active guests', '#/guests?status=Active')}
+        ${stat('Unpaid expenses', money(d.bills_unpaid_total), `${d.counts.unpaid_bills} expense${d.counts.unpaid_bills === 1 ? '' : 's'}`, '#/bills?status=Unpaid')}
       </section>
       <div class="progress" role="progressbar" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100" aria-label="Rent collected this month"><span class="bar" data-pct="${Math.min(pct, 100)}"></span></div>
       ${reminderSections(d.reminders)}
@@ -305,7 +294,7 @@
   }
 
   function stateBadge(s, extra = '') {
-    const labels = { overdue: 'Overdue', due_today: 'Due today', upcoming: 'Upcoming', expired: 'Expired', expiring: 'Expiring', missed: 'Missed', today: 'Today', pending: 'Unverified' };
+    const labels = { overdue: 'Overdue', due_today: 'Due today', upcoming: 'Upcoming', expired: 'Expired', expiring: 'Expiring', today: 'Today', pending: 'Unverified' };
     const cls = { overdue: 'bad', due_today: 'warn', upcoming: '', expired: 'bad', expiring: 'warn', missed: 'bad', today: 'warn', pending: 'warn' };
     return `<span class="pill ${cls[s] || ''}">${labels[s] || s}${extra ? ` · ${esc(extra)}` : ''}</span>`;
   }
@@ -333,7 +322,7 @@
     const rent = section('Rent reminders', rem.rent, (i) => `
       <li>
         <div class="rem-main">
-          <strong>${esc(i.tenant_name)}</strong> · ${esc(i.property_name)}
+          <a href="#/guests?id=${i.guest_id}"><strong>${esc(i.guest_name)}</strong></a>${i.place ? ` · ${esc(i.place)}` : ''}
           <div>${stateBadge(i.state, i.state === 'overdue' ? `${i.days_overdue}d` : '')}
             ${esc(fmtMonth(i.period))} rent <strong>${esc(money(i.outstanding))}</strong>
             ${i.paid ? `<span class="muted">(paid ${esc(money(i.paid))} of ${esc(money(i.rent))})</span>` : ''}
@@ -342,41 +331,36 @@
         </div>
         <div class="rem-actions">
           ${sendButtons(i)}
-          <button class="btn small primary" data-action="record-payment" data-agreement="${i.agreement_id}" data-period="${esc(i.period)}" data-amount="${i.outstanding}">Record payment</button>
+          <button class="btn small primary" data-action="record-payment" data-guest="${i.guest_id}" data-period="${esc(i.period)}" data-amount="${i.outstanding}">Record payment</button>
         </div>
       </li>`, 'No rent due. 🎉');
 
-    const bills = section('Bills due', rem.bills, (b) => `
+    const stays = section('Check-outs & arrivals (7 days)', rem.stays, (x) => {
+      const when = x.date ? `${x.type === 'checkout' ? 'checks out' : 'arrives'} ${esc(fmtDate(x.date))}${x.days_left > 0 ? ` (in ${x.days_left} day${x.days_left === 1 ? '' : 's'})` : x.days_left < 0 ? ` (${-x.days_left} day${x.days_left === -1 ? '' : 's'} ago)` : ' (today)'}` : 'no arrival date';
+      return `
       <li>
         <div class="rem-main">
-          <strong>${esc(b.category)}</strong>${b.provider ? ` (${esc(b.provider)})` : ''} · ${esc(b.property_name)}
-          <div>${stateBadge(b.state, b.state === 'overdue' ? `${b.days_overdue}d` : '')} <strong>${esc(money(b.amount))}</strong> · due ${esc(fmtDate(b.due_date))} · paid by ${esc(b.payer || 'Owner')}</div>
-        </div>
-        <div class="rem-actions"><button class="btn small primary" data-action="bill-paid" data-id="${b.bill_id}">Mark paid</button></div>
-      </li>`, 'No bills due.');
-
-    const schedules = section('Upcoming timings & visits', rem.schedules, (s) => `
-      <li>
-        <div class="rem-main">
-          <strong>${esc(s.title)}</strong> ${s.kind ? `<span class="muted">${esc(s.kind)}</span>` : ''}
-          <div>${stateBadge(s.state)} ${esc(fmtDateTime(s.starts_at))}${s.ends_at ? ` – ${esc(fmtDateTime(s.ends_at))}` : ''}</div>
-          <div class="muted small">${[s.property_name, s.tenant_name, s.contact_name && `${s.contact_name}${s.contact_phone ? ` (${s.contact_phone})` : ''}`].filter(Boolean).map(esc).join(' · ')}</div>
+          <a href="#/guests?id=${x.guest_id}"><strong>${esc(x.guest_name)}</strong></a>${x.place ? ` · ${esc(x.place)}` : ''}
+          <div><span class="pill ${x.type === 'checkout' ? 'warn' : ''}">${x.type === 'checkout' ? 'Check-out' : 'Arrival'}</span> ${when}</div>
+          ${lastReminded(x)}
         </div>
         <div class="rem-actions">
-          ${s.contact_phone ? `<a class="btn small" href="tel:${esc(s.contact_phone)}">Call</a>` : ''}
-          <button class="btn small primary" data-action="schedule-done" data-id="${s.schedule_id}">Done</button>
+          ${sendButtons(x)}
+          ${x.type === 'checkout'
+            ? `<button class="btn small primary" data-action="check-out" data-id="${x.guest_id}" data-name="${esc(x.guest_name)}">Check out</button>`
+            : `<button class="btn small primary" data-action="check-in" data-id="${x.guest_id}">Check in</button>`}
         </div>
-      </li>`, 'Nothing scheduled.');
+      </li>`;
+    }, 'No check-outs or arrivals this week.');
 
-    const agreements = section('Agreements expiring (60 days)', rem.agreements, (a) => `
+    const bills = section('Expenses due', rem.bills, (b) => `
       <li>
         <div class="rem-main">
-          <strong>${esc(a.tenant_name)}</strong> · ${esc(a.property_name)}
-          <div>${stateBadge(a.state)} ends ${esc(fmtDate(a.end_date))} ${a.days_left >= 0 ? `(${a.days_left} days left)` : ''}</div>
-          ${lastReminded(a)}
+          <strong>${esc(b.category)}</strong>${b.provider ? ` (${esc(b.provider)})` : ''} · ${esc(b.pg_name)}
+          <div>${stateBadge(b.state, b.state === 'overdue' ? `${b.days_overdue}d` : '')} <strong>${esc(money(b.amount))}</strong> · due ${esc(fmtDate(b.due_date))}</div>
         </div>
-        <div class="rem-actions">${sendButtons(a)}<a class="btn small" href="#/agreements?id=${a.agreement_id}">Open</a></div>
-      </li>`, 'No agreements expiring soon.');
+        <div class="rem-actions"><button class="btn small primary" data-action="bill-paid" data-id="${b.bill_id}">Mark paid</button></div>
+      </li>`, 'No expenses due.');
 
     const docs = section('Documents', [...rem.documents_expiring, ...rem.documents_unverified], (d) => `
       <li>
@@ -390,61 +374,71 @@
         </div>
       </li>`, 'All documents verified and current.');
 
-    return `<div class="${full ? 'rem-grid full' : 'rem-grid'}">${rent}${bills}${schedules}${agreements}${docs}</div>`;
+    return `<div class="${full ? 'rem-grid full' : 'rem-grid'}">${rent}${stays}${bills}${docs}</div>`;
   }
 
-  // ---------- PG bed board ----------
+  // ---------- bed board ----------
 
   async function renderBedBoard(main, query) {
-    const [properties, rooms, beds] = await Promise.all([api('properties?sort=name&dir=asc'), api('rooms?sort=room_number&dir=asc&limit=5000'), api('beds?sort=bed_label&dir=asc&limit=5000')]);
-    const shared = properties.filter((p) => SHARED_TYPES.includes(p.type) || p.room_count);
-    const shown = query.property_id ? shared.filter((p) => String(p.id) === query.property_id) : shared;
+    const [pgs, beds] = await Promise.all([api('pgs?sort=name&dir=asc'), api('beds?sort=id&dir=asc&limit=5000')]);
+    const shown = query.pg_id ? pgs.filter((p) => String(p.id) === query.pg_id) : pgs;
 
-    const bedChip = (b, room, property) => {
-      if (b.occupant) return `<a class="bed occupied" href="#/tenants?id=${b.occupant_id}" title="${esc(b.bed_label)}: ${esc(b.occupant)}"><span class="bed-name">${esc(b.bed_label)}</span><span>${esc(b.occupant)}</span></a>`;
-      if (b.status !== 'Available') return `<a class="bed blocked" href="#/beds?id=${b.id}"><span class="bed-name">${esc(b.bed_label)}</span><span>${esc(b.status)}</span></a>`;
-      return `<button class="bed vacant" data-action="assign-bed" data-bed="${b.id}" title="Add a tenant to this bed"><span class="bed-name">${esc(b.bed_label)}</span><span>Vacant${b.monthly_rent ? ` · ${esc(money(b.monthly_rent))}` : ''}</span></button>`;
+    const bedChip = (b) => {
+      const tip = `${b.bed_label}${b.bed_type ? ` (${b.bed_type})` : ''}`;
+      if (b.guest_name && b.guest_status === 'Active') {
+        return `<a class="bed occupied" href="#/guests?id=${b.guest_id}" title="${esc(tip)}: ${esc(b.guest_name)}"><span class="bed-name">${esc(b.bed_label)}</span><span>${esc(b.guest_name)}</span></a>`;
+      }
+      if (b.guest_name) {
+        return `<a class="bed booked" href="#/guests?id=${b.guest_id}" title="${esc(tip)}: booked for ${esc(b.guest_name)}"><span class="bed-name">${esc(b.bed_label)}</span><span>Booked · ${esc(b.guest_name)}</span></a>`;
+      }
+      if (b.status !== 'Available') {
+        return `<a class="bed blocked" href="#/beds?id=${b.id}" title="${esc(tip)}"><span class="bed-name">${esc(b.bed_label)}</span><span>${esc(b.status)}</span></a>`;
+      }
+      return `<button class="bed vacant" data-action="assign-bed" data-bed="${b.id}" title="${esc(tip)}: check a guest in"><span class="bed-name">${esc(b.bed_label)}</span><span>Vacant${b.rent != null ? ` · ${esc(money(b.rent))}` : ''}</span></button>`;
+    };
+
+    // Beds grouped by bed type, in price-line order, untyped beds last.
+    const groups = (p, pBeds) => {
+      const order = priceList(p.bed_prices).map((x) => x.label);
+      const types = [...new Set([...order, ...pBeds.map((b) => b.bed_type || '')])].filter((t) => pBeds.some((b) => (b.bed_type || '') === t));
+      return types.map((t) => {
+        const list = pBeds.filter((b) => (b.bed_type || '') === t);
+        const line = priceList(p.bed_prices).find((x) => x.label === t);
+        const free = list.filter((b) => !b.guest_name && b.status === 'Available').length;
+        return `
+          <div class="room">
+            <div class="room-head"><strong>${esc(t || 'Other beds')}</strong> <span class="muted small">${list.length} bed${list.length === 1 ? '' : 's'}${line ? ` · ${esc(money(line.price))} / bed` : ''} · ${free} vacant</span></div>
+            <div class="beds">${list.map(bedChip).join('')}</div>
+          </div>`;
+      }).join('');
     };
 
     main.innerHTML = `
       <div class="page-head">
         <h2>Bed board</h2>
         <div class="head-actions">
-          <select id="board-property" aria-label="Property">
-            <option value="">All PG / hostel / BnB properties</option>
-            ${shared.map((p) => `<option value="${p.id}" ${String(p.id) === query.property_id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
-          </select>
+          ${pgs.length > 1 ? `<select id="board-pg" aria-label="PG">
+            <option value="">All PGs</option>
+            ${pgs.map((p) => `<option value="${p.id}" ${String(p.id) === query.pg_id ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+          </select>` : ''}
+          <a class="btn primary" href="#/pgs?new=1">+ Add PG</a>
         </div>
       </div>
-      <p class="legend"><span class="bed-dot vacant"></span> Vacant <span class="bed-dot occupied"></span> Occupied <span class="bed-dot blocked"></span> Reserved / maintenance</p>
+      <p class="legend"><span class="bed-dot vacant"></span> Vacant (tap to check in) <span class="bed-dot occupied"></span> Occupied <span class="bed-dot booked"></span> Booked <span class="bed-dot blocked"></span> Maintenance / blocked</p>
       ${shown.length ? shown.map((p) => {
-        const pRooms = rooms.filter((r) => r.property_id === p.id);
+        const pBeds = beds.filter((b) => b.pg_id === p.id);
         return `
           <section class="card board">
             <div class="page-head">
-              <h3>${esc(p.name)} <span class="pill">${esc(p.type || '')}</span>${p.pg_for ? ` <span class="pill">${esc(p.pg_for)}</span>` : ''}${p.meals && p.meals !== 'No food' ? ` <span class="pill">🍽 ${esc(p.meals)}</span>` : ''}</h3>
-              <div class="head-actions">
-                <span class="muted">${BED_TYPES.includes(p.type) ? `${bedSummary(p)}${priceRange(p.bed_prices) || p.rent_per_bed != null ? ` · ${esc(priceRange(p.bed_prices) || money(p.rent_per_bed))} / bed` : ''}` : p.bed_count ? occupancyText(p.occupied_beds, p.bed_count) : 'No beds yet'}</span>
-                <a class="btn small primary" href="#/rooms?property_id=${p.id}">Manage rooms</a>
-              </div>
+              <h3><a href="#/pgs?id=${p.id}">${esc(p.name)}</a>${p.pg_for ? ` <span class="pill">${esc(p.pg_for)}</span>` : ''}${p.meals && p.meals !== 'No food' ? ` <span class="pill">🍽 ${esc(p.meals)}</span>` : ''}</h3>
+              <div class="head-actions"><span class="muted">${bedSummary(p)}</span></div>
             </div>
-            ${priceList(p.bed_prices).length ? `<p class="price-chips">${priceList(p.bed_prices).map((x) => `<span class="pill">${esc(x.label)}${x.beds != null ? ` · ${x.beds} bed${x.beds === 1 ? '' : 's'}` : ''} · ${esc(money(x.price))}</span>`).join(' ')}</p>` : ''}
             ${p.gate_timings || p.visiting_hours || p.warden_contact_id ? `<p class="muted small board-info">${[p.gate_timings && `🕙 ${esc(p.gate_timings)}`, p.visiting_hours && `Visitors ${esc(p.visiting_hours)}`, p.warden_contact_id && `Warden: ${esc(p.warden_contact_id_label)}`].filter(Boolean).join(' · ')}</p>` : ''}
-            ${pRooms.length ? `<div class="rooms">${pRooms.map((r) => {
-              const rBeds = beds.filter((b) => b.room_id === r.id);
-              const tags = [r.sharing && (['Single', 'Double', 'Triple', 'Four', 'Five+'].includes(r.sharing) ? `${r.sharing} sharing` : r.sharing), r.ac ? 'AC' : '', r.attached_bath ? 'Attached bath' : '', r.floor && `Floor ${r.floor}`].filter(Boolean);
-              return `
-                <div class="room ${r.status !== 'Available' ? 'room-off' : ''}">
-                  <div class="room-head"><a href="#/rooms?id=${r.id}"><strong>Room ${esc(r.room_number)}</strong></a> <span class="muted small">${esc(tags.join(' · '))}</span></div>
-                  ${r.status !== 'Available' ? `<span class="pill bad">${esc(r.status)}</span>` : ''}
-                  <div class="beds">${rBeds.length ? rBeds.map((b) => bedChip(b, r, p)).join('') : `<span class="muted small">No beds · ${r.tenant_count} tenant${r.tenant_count === 1 ? '' : 's'}</span>`}</div>
-                </div>`;
-            }).join('')}</div>` : `<p class="muted">No rooms added yet. <a href="#/rooms?property_id=${p.id}">Add rooms</a> to track beds.</p>`}
-            ${(p.total_beds || 0) > (p.bed_count || 0) && p.bed_count ? `<p class="muted small">${p.total_beds - p.bed_count} of ${p.total_beds} beds aren't in a room yet.</p>` : ''}
+            ${pBeds.length ? `<div class="rooms">${groups(p, pBeds)}</div>` : `<p class="muted">No beds yet. <a href="#/pgs?id=${p.id}">Set total beds or bed prices</a> and they are created for you.</p>`}
           </section>`;
-      }).join('') : `<div class="empty card"><p>No PG, hostel or BnB properties yet. Add a property with type <strong>PG / Hostel</strong> or <strong>BnB</strong>, then add its rooms.</p><a class="btn primary" href="#/properties">Go to properties</a></div>`}
+      }).join('') : `<div class="empty card"><p>No PGs yet. Add a PG with its total beds and bed prices; the beds are created automatically.</p><a class="btn primary" href="#/pgs?new=1">+ Add PG</a></div>`}
     `;
-    $('#board-property').addEventListener('change', (e) => (location.hash = `#/bedboard${e.target.value ? `?property_id=${e.target.value}` : ''}`));
+    $('#board-pg')?.addEventListener('change', (e) => (location.hash = `#/bedboard${e.target.value ? `?pg_id=${e.target.value}` : ''}`));
   }
 
   // ---------- resource lists ----------
@@ -521,53 +515,29 @@
     }
   }
 
-  // A PG / hostel has no whole-property rent or status: show its bed price
-  // and vacant beds in those columns instead.
   function listCell(name, f, row) {
-    if (name === 'properties' && !appliesTo(f, row.type)) {
-      if (f.name === 'monthly_rent') {
-        const range = priceRange(row.bed_prices) || (row.rent_per_bed != null ? money(row.rent_per_bed) : '');
-        return range ? `${esc(range)} <span class="muted small">/ bed</span>` : '';
-      }
-      if (f.name === 'status') {
-        const s = bedStats(row);
-        return s.total ? `<span class="pill ${s.vacant ? 'good' : 'warn'}">${s.vacant ? `${s.vacant} bed${s.vacant === 1 ? '' : 's'} vacant` : 'Full'}</span>` : '';
-      }
-      return '';
-    }
-    if (name === 'properties' && f.name === 'monthly_rent' && priceList(row.floor_prices).length) {
-      const range = priceRange(row.floor_prices);
-      return row.monthly_rent != null ? `${formatCell(f, row)}<div class="muted small">floors ${esc(range)}</div>` : `${esc(range)} <span class="muted small">by floor</span>`;
-    }
     return formatCell(f, row);
   }
 
   function rowActions(name, row) {
     const extra = [];
-    if (name === 'properties' && (SHARED_TYPES.includes(row.type) || row.room_count)) {
-      extra.push(`<a class="btn small" href="#/bedboard?property_id=${row.id}">Bed board</a>`);
-      extra.push(`<a class="btn small" href="#/rooms?property_id=${row.id}">Rooms</a>`);
+    if (name === 'pgs') {
+      extra.push(`<a class="btn small" href="#/bedboard?pg_id=${row.id}">Bed board</a>`);
+      extra.push(`<a class="btn small" href="#/guests?pg_id=${row.id}">Guests</a>`);
+      extra.push(`<a class="btn small" href="#/bills?pg_id=${row.id}">Expenses</a>`);
     }
-    if (name === 'rooms') extra.push(`<a class="btn small" href="#/beds?room_id=${row.id}">Beds</a>`);
-    if (name === 'beds' && !row.occupant && row.status === 'Available') {
-      extra.push(`<button class="btn small" data-action="assign-bed" data-bed="${row.id}">+ Tenant</button>`);
+    if (name === 'beds' && !row.guest_name && row.status === 'Available') {
+      extra.push(`<button class="btn small" data-action="assign-bed" data-bed="${row.id}">+ Check in</button>`);
     }
-    if (name === 'properties') {
-      extra.push(`<a class="btn small" href="#/tenants?property_id=${row.id}">Tenants</a>`);
-      extra.push(`<a class="btn small" href="#/bills?property_id=${row.id}">Bills</a>`);
-      extra.push(`<a class="btn small" href="#/documents?property_id=${row.id}">Docs</a>`);
-    }
-    if (name === 'tenants') {
-      extra.push(`<a class="btn small" href="#/agreements?tenant_id=${row.id}">Agreements</a>`);
-      extra.push(`<a class="btn small" href="#/documents?tenant_id=${row.id}">Docs</a>`);
-    }
-    if (name === 'agreements') {
-      extra.push(`<a class="btn small" href="#/rent_payments?agreement_id=${row.id}">Payments</a>`);
-      extra.push(`<button class="btn small" data-action="record-payment" data-agreement="${row.id}" data-amount="${row.monthly_rent}">+ Payment</button>`);
+    if (name === 'guests') {
+      if (row.status === 'Booked') extra.push(`<button class="btn small" data-action="check-in" data-id="${row.id}">Check in</button>`);
+      if (row.status === 'Active') extra.push(`<button class="btn small" data-action="record-payment" data-guest="${row.id}" data-amount="${row.rent ?? ''}">+ Payment</button>`);
+      extra.push(`<a class="btn small" href="#/payments?guest_id=${row.id}">Payments</a>`);
+      extra.push(`<a class="btn small" href="#/documents?guest_id=${row.id}">Docs</a>`);
+      if (row.status === 'Active') extra.push(`<button class="btn small" data-action="check-out" data-id="${row.id}" data-name="${esc(row.full_name)}">Check out</button>`);
     }
     if (name === 'bills' && row.status !== 'Paid') extra.push(`<button class="btn small" data-action="bill-paid" data-id="${row.id}">Mark paid</button>`);
     if (name === 'documents' && !row.verified) extra.push(`<button class="btn small" data-action="doc-verify" data-id="${row.id}">Verify</button>`);
-    if (name === 'schedules' && row.status === 'Scheduled') extra.push(`<button class="btn small" data-action="schedule-done" data-id="${row.id}">Done</button>`);
     return `<div class="row-actions">${extra.join('')}<button class="btn small" data-action="edit" data-id="${row.id}">Edit</button><button class="btn small danger" data-action="delete" data-id="${row.id}" aria-label="Delete">Delete</button></div>`;
   }
 
@@ -684,13 +654,13 @@
     const inputs = [];
     for (const f of def.fields) {
       const v = f.type === 'file' ? (row && row[`${f.name}_url`] ? { url: row[`${f.name}_url`], name: row[`${f.name}_name`] } : null) : values[f.name];
+      if (f.section) inputs.push(`<h4 class="form-section">${esc(f.section)}</h4>`);
       inputs.push(await fieldInput(f, v));
     }
     $('#form-fields').innerHTML = inputs.join('');
     wireDependentSelects(name);
     wireTypeFields(def);
     wirePriceLists(def);
-    if (name === 'rooms') wireRoomPrices();
     const dialog = $('#dialog');
     if (!dialog.open) dialog.showModal();
     const first = $('#form-fields input:not([type=checkbox]), #form-fields select, #form-fields textarea');
@@ -712,28 +682,8 @@
     refresh();
   }
 
-  // A new room's bed rent can be picked from its PG's bed prices.
-  function wireRoomPrices() {
-    const form = $('#record-form');
-    const property = form.elements.property_id;
-    const rent = form.elements.rent_per_bed;
-    if (!property || !rent) return;
-    rent.setAttribute('list', 'bed-price-list');
-    rent.insertAdjacentHTML('afterend', '<datalist id="bed-price-list"></datalist><span class="hint" id="bed-price-hint" hidden></span>');
-    const refresh = () => {
-      const p = (state.optionsCache.properties || []).find((o) => String(o.id) === property.value);
-      const list = priceList(p && p.bed_prices);
-      $('#bed-price-list').innerHTML = list.map((x) => `<option value="${x.price}">${esc(x.label)}</option>`).join('');
-      const hint = $('#bed-price-hint');
-      hint.hidden = !list.length;
-      hint.textContent = list.length ? `Bed prices: ${list.map((x) => `${x.label} ${money(x.price)}`).join(' · ')}` : '';
-    };
-    property.addEventListener('change', refresh);
-    refresh();
-  }
-
-  // Room and bed dropdowns only list rooms of the chosen property and beds of
-  // the chosen room, and are hidden when there is nothing to choose.
+  // The bed dropdown only lists beds of the chosen PG, and is hidden when
+  // there is nothing to choose.
   function wireDependentSelects(resourceName) {
     const form = $('#record-form');
     const children = [...form.querySelectorAll('select[data-depends-on]')];
@@ -745,7 +695,8 @@
         const keep = select.value || select.dataset.value || '';
         const opts = (state.optionsCache[select.dataset.ref] || []).filter((o) => parentValue && String(o.parent) === parentValue);
         select.innerHTML = '<option value="">—</option>' + opts.map((o) => {
-          const occupied = o.occupant ? ` – ${o.occupant}` : select.dataset.ref === 'beds' ? (o.status === 'Available' ? ' – vacant' : ` – ${o.status}`) : '';
+          const extra = select.dataset.ref === 'beds' ? [o.bed_type, o.rent != null && money(o.rent)].filter(Boolean).join(', ') : '';
+          const occupied = (extra ? ` (${extra})` : '') + (o.occupant ? ` – ${o.occupant}` : select.dataset.ref === 'beds' ? (o.status === 'Available' ? ' – vacant' : ` – ${o.status}`) : '');
           return `<option value="${o.id}" ${String(o.id) === keep ? 'selected' : ''}>${esc((o.short_label || o.label) + occupied)}</option>`;
         }).join('');
         select.dataset.value = '';
@@ -761,18 +712,13 @@
       });
     }
 
-    if (resourceName === 'agreements') {
-      // Suggest the bed or room rent when the rent box is still empty.
-      const rent = form.elements.monthly_rent;
-      const suggest = () => {
-        if (!rent || rent.value) return;
+    if (resourceName === 'guests') {
+      // Suggest the bed's rate when the rent box is still empty.
+      const rent = form.elements.rent;
+      form.elements.bed_id?.addEventListener('change', () => {
         const bed = (state.optionsCache.beds || []).find((o) => String(o.id) === form.elements.bed_id.value);
-        const room = (state.optionsCache.rooms || []).find((o) => String(o.id) === form.elements.room_id.value);
-        const value = bed ? bed.monthly_rent ?? bed.room_rent_per_bed : room ? room.rent_per_room ?? room.rent_per_bed : null;
-        if (value !== null && value !== undefined) rent.value = value;
-      };
-      form.elements.bed_id?.addEventListener('change', suggest);
-      form.elements.room_id?.addEventListener('change', suggest);
+        if (rent && !rent.value && bed && bed.rent != null) rent.value = bed.rent;
+      });
     }
     refresh();
   }
@@ -883,17 +829,20 @@
     const name = state.view;
 
     if (action === 'new') {
-      // Pre-fill from the list's filter, e.g. adding a room from a property's room list.
+      // Pre-fill from the list's filter, e.g. adding a guest from a PG's guest list.
       const preset = {};
       for (const f of resource(name).fields) if (state.query[f.name] && f.type !== 'select') preset[f.name] = state.query[f.name];
       if (el.dataset.preset) Object.assign(preset, JSON.parse(el.dataset.preset));
       return openForm(name, null, preset);
     }
     if (action === 'assign-bed') {
-      const beds = await options('beds', true);
-      const bed = beds.find((b) => String(b.id) === el.dataset.bed);
-      const room = bed && (await options('rooms', true)).find((r) => r.id === bed.parent);
-      return openForm('tenants', null, { property_id: room?.parent, room_id: bed?.parent, bed_id: el.dataset.bed, status: 'Active', move_in: today() });
+      const bed = (await options('beds', true)).find((b) => String(b.id) === el.dataset.bed);
+      return openForm('guests', null, { pg_id: bed?.parent, bed_id: el.dataset.bed, status: 'Active', check_in: today(), rent: bed?.rent });
+    }
+    if (action === 'check-in') return quickUpdate('guests', id, { status: 'Active', check_in: today() }, 'Guest checked in');
+    if (action === 'check-out') {
+      if (!(await confirmAction(`Check out ${el.dataset.name || 'this guest'} today? Their bed becomes vacant.`, 'Check out'))) return;
+      return quickUpdate('guests', id, { status: 'Checked out', check_out: today() }, 'Guest checked out · bed is now vacant');
     }
     if (action === 'edit') return openForm(name, await api(`${name}/${id}`));
     if (action === 'delete') {
@@ -918,8 +867,9 @@
       return;
     }
     if (action === 'record-payment') {
-      return openForm('rent_payments', null, {
-        agreement_id: el.dataset.agreement,
+      return openForm('payments', null, {
+        guest_id: el.dataset.guest,
+        kind: 'Rent',
         period: el.dataset.period || today().slice(0, 7),
         amount: el.dataset.amount,
         paid_on: today(),
@@ -940,7 +890,6 @@
     }
     if (action === 'bill-paid') return quickUpdate('bills', id, { status: 'Paid', paid_on: today() }, 'Bill marked as paid');
     if (action === 'doc-verify') return quickUpdate('documents', id, { verified: true, verified_on: today() }, 'Document marked as verified');
-    if (action === 'schedule-done') return quickUpdate('schedules', id, { status: 'Done' }, 'Marked as done');
   });
 
   // Open a record when its row is clicked (but not when clicking links/buttons).

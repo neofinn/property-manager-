@@ -1,6 +1,6 @@
 'use strict';
 
-const { resources, appliesTo } = require('./schema');
+const { resources, BED_HOLDING } = require('./schema');
 const { localToday } = require('./reminders');
 
 class HttpError extends Error {
@@ -13,54 +13,47 @@ class HttpError extends Error {
 
 // SQL expression that turns a foreign key column into a human readable label.
 const LABEL_SQL = {
-  properties: (col) => `(SELECT name FROM properties WHERE id = ${col})`,
-  tenants: (col) => `(SELECT full_name FROM tenants WHERE id = ${col})`,
+  pgs: (col) => `(SELECT name FROM pgs WHERE id = ${col})`,
+  guests: (col) => `(SELECT full_name FROM guests WHERE id = ${col})`,
   contacts: (col) => `(SELECT name FROM contacts WHERE id = ${col})`,
-  rooms: (col) =>
-    `(SELECT 'Room ' || r.room_number || ' · ' || p.name FROM rooms r ` +
-    `JOIN properties p ON p.id = r.property_id WHERE r.id = ${col})`,
-  beds: (col) =>
-    `(SELECT b.bed_label || ' · Room ' || r.room_number || ' · ' || p.name FROM beds b ` +
-    `JOIN rooms r ON r.id = b.room_id JOIN properties p ON p.id = r.property_id WHERE b.id = ${col})`,
-  agreements: (col) =>
-    `(SELECT tn.full_name || ' @ ' || p.name FROM agreements a ` +
-    `JOIN tenants tn ON tn.id = a.tenant_id JOIN properties p ON p.id = a.property_id ` +
-    `WHERE a.id = ${col})`,
+  beds: (col) => `(SELECT b.bed_label || ' · ' || p.name FROM beds b JOIN pgs p ON p.id = b.pg_id WHERE b.id = ${col})`,
 };
 
-// A bed (or a room let out as a whole) is occupied by an active tenant.
-const OCCUPANT_SQL = (bedCol) =>
-  `(SELECT full_name FROM tenants WHERE bed_id = ${bedCol} AND status = 'Active' ORDER BY id LIMIT 1)`;
-const OCCUPIED_BEDS_SQL = (where) =>
-  `(SELECT COUNT(*) FROM beds b WHERE ${where} AND EXISTS ` +
-  `(SELECT 1 FROM tenants x WHERE x.bed_id = b.id AND x.status = 'Active'))`;
+const HOLDING_SQL = BED_HOLDING.map((s) => `'${s}'`).join(', ');
+// The guest holding a bed (an active guest first, then a booking).
+const HOLDER_SQL = (bedCol, column) =>
+  `(SELECT ${column} FROM guests g WHERE g.bed_id = ${bedCol} AND g.status IN (${HOLDING_SQL}) ` +
+  `ORDER BY CASE g.status WHEN 'Active' THEN 0 ELSE 1 END, g.id LIMIT 1)`;
+const BEDS_WITH_SQL = (pgCol, status) =>
+  `(SELECT COUNT(*) FROM beds b WHERE b.pg_id = ${pgCol} AND EXISTS ` +
+  `(SELECT 1 FROM guests g WHERE g.bed_id = b.id AND g.status = '${status}'))`;
 
 // Read-only columns computed for list and detail views.
 const COMPUTED_SQL = {
-  properties: {
-    room_count: '(SELECT COUNT(*) FROM rooms WHERE property_id = t.id)',
-    bed_count: '(SELECT COUNT(*) FROM beds b JOIN rooms r ON r.id = b.room_id WHERE r.property_id = t.id)',
-    occupied_beds: OCCUPIED_BEDS_SQL('b.room_id IN (SELECT id FROM rooms WHERE property_id = t.id)'),
-    tenant_count: "(SELECT COUNT(*) FROM tenants WHERE property_id = t.id AND status = 'Active')",
-  },
-  rooms: {
-    bed_count: '(SELECT COUNT(*) FROM beds WHERE room_id = t.id)',
-    occupied_beds: OCCUPIED_BEDS_SQL('b.room_id = t.id'),
-    tenant_count: "(SELECT COUNT(*) FROM tenants WHERE room_id = t.id AND status = 'Active')",
+  pgs: {
+    bed_count: '(SELECT COUNT(*) FROM beds WHERE pg_id = t.id)',
+    occupied_beds: BEDS_WITH_SQL('t.id', 'Active'),
+    booked_beds:
+      `(SELECT COUNT(*) FROM beds b WHERE b.pg_id = t.id AND EXISTS (SELECT 1 FROM guests g WHERE g.bed_id = b.id AND g.status = 'Booked') ` +
+      `AND NOT EXISTS (SELECT 1 FROM guests g WHERE g.bed_id = b.id AND g.status = 'Active'))`,
+    blocked_beds:
+      `(SELECT COUNT(*) FROM beds b WHERE b.pg_id = t.id AND b.status != 'Available' ` +
+      `AND NOT EXISTS (SELECT 1 FROM guests g WHERE g.bed_id = b.id AND g.status IN (${HOLDING_SQL})))`,
+    guest_count: "(SELECT COUNT(*) FROM guests WHERE pg_id = t.id AND status = 'Active')",
   },
   beds: {
-    occupant: OCCUPANT_SQL('t.id'),
-    occupant_id: "(SELECT id FROM tenants WHERE bed_id = t.id AND status = 'Active' ORDER BY id LIMIT 1)",
+    guest_name: HOLDER_SQL('t.id', 'full_name'),
+    guest_id: HOLDER_SQL('t.id', 'id'),
+    guest_status: HOLDER_SQL('t.id', 'status'),
+    guest_phone: HOLDER_SQL('t.id', 'phone'),
   },
 };
 
-// Extra columns sent with dropdown options. `parent` lets the form show only
-// the rooms of the chosen property and the beds of the chosen room.
+// Extra columns sent with dropdown options. `parent` lets the guest form show
+// only the beds of the chosen PG.
 const OPTION_SQL = {
-  properties: 't.type AS type, t.bed_prices',
-  rooms: "t.property_id AS parent, 'Room ' || t.room_number AS short_label, t.rent_per_bed, t.rent_per_room",
-  beds: `t.room_id AS parent, t.bed_label AS short_label, t.monthly_rent, t.status, ${OCCUPANT_SQL('t.id')} AS occupant, ` +
-    '(SELECT rent_per_bed FROM rooms WHERE id = t.room_id) AS room_rent_per_bed',
+  pgs: 't.rent_per_bed, t.bed_prices',
+  beds: `t.pg_id AS parent, t.bed_label AS short_label, t.bed_type, t.rent, t.status, ${HOLDER_SQL('t.id', 'full_name')} AS occupant`,
 };
 
 const MAX_PRICE_ROWS = 50;
@@ -176,13 +169,21 @@ function coerce(field, raw) {
 
 function crossFieldErrors(resourceName, row) {
   const errors = {};
-  if (resourceName === 'agreements' && row.start_date && row.end_date && row.end_date < row.start_date) {
-    errors.end_date = 'must be on or after the start date';
-  }
-  if (resourceName === 'schedules' && row.starts_at && row.ends_at && row.ends_at < row.starts_at) {
-    errors.ends_at = 'must be after the start time';
+  if (resourceName === 'guests' && row.check_in && row.check_out && row.check_out < row.check_in) {
+    errors.check_out = 'must be on or after the check-in date';
   }
   return errors;
+}
+
+// Bed price lines as [{ type, rent }], one entry per bed.
+function priceLines(pg) {
+  let lines = [];
+  try {
+    lines = JSON.parse(pg.bed_prices || '[]');
+  } catch {
+    // ignore
+  }
+  return Array.isArray(lines) ? lines : [];
 }
 
 class Store {
@@ -209,28 +210,19 @@ class Store {
       if (value !== undefined) values[field.name] = value;
     }
 
-    if (resourceName === 'properties') {
-      // Clear fields that don't apply to the property type (e.g. bed fields on a villa).
-      const type = values.type !== undefined ? values.type : existing ? existing.type : null;
-      for (const field of def.fields) {
-        if (appliesTo(field, type) || errors[field.name]) continue;
-        if (values[field.name] !== undefined || (existing && existing[field.name] !== null)) values[field.name] = null;
-      }
-      // Fill an empty bed count from the bed prices' bed numbers.
-      const bedPrices = values.bed_prices !== undefined ? values.bed_prices : existing ? existing.bed_prices : null;
-      const totalBeds = values.total_beds !== undefined ? values.total_beds : existing ? existing.total_beds : null;
-      if (bedPrices && totalBeds == null) {
-        const sum = JSON.parse(bedPrices).reduce((n, p) => n + (p.beds || 0), 0);
-        if (sum) values.total_beds = sum;
-      }
+    const current = (name) => (values[name] !== undefined ? values[name] : existing ? existing[name] : null);
+    if (resourceName === 'pgs' && !errors.bed_prices && !errors.total_beds) {
+      // Total beds defaults to (and can't be below) the beds in the price lines.
+      const lineBeds = priceLines({ bed_prices: current('bed_prices') }).reduce((n, p) => n + (p.beds || 0), 0);
+      const total = current('total_beds');
+      if (total == null && lineBeds) values.total_beds = lineBeds;
+      else if (total != null && total < lineBeds) errors.total_beds = `Total beds can't be less than the ${lineBeds} beds in the price lines`;
     }
-    if (resourceName === 'rooms' && !existing && values.rent_per_bed == null && values.property_id) {
-      // New rooms in a PG / hostel take the property's bed price.
-      const property = await this.db.get('SELECT rent_per_bed FROM properties WHERE id = ?', values.property_id);
-      if (property && property.rent_per_bed != null) values.rent_per_bed = property.rent_per_bed;
+    if (resourceName === 'guests' && current('status') === 'Checked out' && !current('check_out')) {
+      values.check_out = localToday();
     }
 
-    if (!Object.keys(errors).length) Object.assign(errors, await this.linkRoomAndBed(resourceName, input, values, existing));
+    if (!Object.keys(errors).length) Object.assign(errors, await this.linkBed(resourceName, input, values, existing));
 
     for (const field of def.fields) {
       if (!field.required || errors[field.name]) continue;
@@ -244,107 +236,72 @@ class Store {
     return values;
   }
 
-  // Tenants and agreements can point at a room and bed. Fill in the room and
-  // property from the chosen bed (and the property from the room), and reject
-  // combinations that don't belong together.
-  async linkRoomAndBed(resourceName, input, values, existing) {
-    if (resourceName !== 'tenants' && resourceName !== 'agreements') return {};
-    const errors = {};
+  // A guest's bed fills in their PG and (if empty) their rent.
+  async linkBed(resourceName, input, values, existing) {
+    if (resourceName !== 'guests') return {};
     const current = (name) => (values[name] !== undefined ? values[name] : existing ? existing[name] : null);
     const explicit = (name) => input[name] !== undefined && input[name] !== null && input[name] !== '';
-
     const bedId = current('bed_id');
-    let bed = null;
-    if (bedId) {
-      bed = await this.db.get('SELECT * FROM beds WHERE id = ?', bedId);
-      if (!bed) return { bed_id: 'Bed does not exist' };
-      if (current('room_id') !== bed.room_id) {
-        if (explicit('room_id')) errors.bed_id = 'Bed is not in the selected room';
-        else values.room_id = bed.room_id;
-      }
+    if (!bedId) return {};
+    const bed = await this.db.get('SELECT * FROM beds WHERE id = ?', bedId);
+    if (!bed) return { bed_id: 'Bed does not exist' };
+    if (current('pg_id') !== bed.pg_id) {
+      if (explicit('pg_id')) return { bed_id: 'Bed is not in the selected PG' };
+      values.pg_id = bed.pg_id;
     }
-
-    const roomId = current('room_id');
-    let room = null;
-    if (roomId) {
-      room = await this.db.get('SELECT * FROM rooms WHERE id = ?', roomId);
-      if (!room) return { room_id: 'Room does not exist' };
-      if (current('property_id') !== room.property_id) {
-        if (explicit('property_id')) errors.room_id = 'Room is not in the selected property';
-        else values.property_id = room.property_id;
-      }
+    if (current('rent') == null && !explicit('rent') && bed.rent != null) values.rent = bed.rent;
+    if (bed.status !== 'Available' && (!existing || existing.bed_id !== bed.id)) {
+      return { bed_id: `${bed.bed_label} is ${bed.status.toLowerCase()}` };
     }
-
-    // Default the agreement rent from the bed or room.
-    if (resourceName === 'agreements' && current('monthly_rent') === null && !explicit('monthly_rent')) {
-      const rent = bed ? bed.monthly_rent ?? room?.rent_per_bed : room ? room.rent_per_room ?? room.rent_per_bed : null;
-      if (rent !== null && rent !== undefined) values.monthly_rent = rent;
-    }
-    return errors;
+    return {};
   }
 
-  // A bed can have only one active tenant and one active agreement at a time.
+  // A bed can be held by one active (or booked) guest at a time.
   async occupancyErrors(resourceName, row, existing) {
-    if (!row.bed_id || row.status !== 'Active') return {};
-    const selfId = existing ? existing.id : -1;
-    if (resourceName === 'tenants') {
-      const other = await this.db.get(
-        "SELECT full_name FROM tenants WHERE bed_id = ? AND status = 'Active' AND id != ?",
-        row.bed_id,
-        selfId,
-      );
-      if (other) return { bed_id: `Bed is already occupied by ${other.full_name}` };
-    }
-    if (resourceName === 'agreements' && row.start_date && row.end_date) {
-      const other = await this.db.get(
-        `SELECT a.start_date, a.end_date, tn.full_name FROM agreements a JOIN tenants tn ON tn.id = a.tenant_id
-         WHERE a.bed_id = ? AND a.status = 'Active' AND a.id != ? AND a.start_date <= ? AND a.end_date >= ?`,
-        row.bed_id,
-        selfId,
-        row.end_date,
-        row.start_date,
-      );
-      if (other) {
-        return { bed_id: `Bed already has an active agreement with ${other.full_name} (${other.start_date} to ${other.end_date})` };
-      }
-    }
+    if (resourceName !== 'guests' || !row.bed_id || !BED_HOLDING.includes(row.status)) return {};
+    const other = await this.db.get(
+      `SELECT full_name, status FROM guests WHERE bed_id = ? AND status IN (${HOLDING_SQL}) AND id != ?`,
+      row.bed_id,
+      existing ? existing.id : -1,
+    );
+    if (other) return { bed_id: `Bed is already ${other.status === 'Booked' ? 'booked for' : 'occupied by'} ${other.full_name}` };
     return {};
   }
 
   // Side effects after a successful insert or update, run in the same transaction.
   async afterSave(resourceName, row) {
-    if (resourceName === 'rooms') {
-      // Create beds up to the room's bed count (never removes any).
-      const names = new Set((await this.db.all('SELECT bed_label FROM beds WHERE room_id = ?', row.id)).map((b) => b.bed_label));
-      for (let i = 1, added = names.size; added < (row.total_beds || 0); i++) {
-        if (names.has(`Bed ${i}`)) continue;
-        await this.db.run(
-          'INSERT INTO beds (room_id, bed_label, monthly_rent, status) VALUES (?, ?, ?, ?)',
-          row.id,
-          `Bed ${i}`,
-          row.rent_per_bed ?? null,
-          'Available',
-        );
-        added++;
+    if (resourceName === 'pgs') await this.syncBeds(row);
+  }
+
+  // Creates the PG's beds from its price lines and total (never removes any),
+  // and applies each line's rate to the beds of that type.
+  async syncBeds(pg) {
+    const beds = await this.db.all('SELECT id, bed_label, bed_type, rent FROM beds WHERE pg_id = ?', pg.id);
+    const names = new Set(beds.map((b) => b.bed_label));
+    let next = 1;
+    const add = async (type, rent) => {
+      while (names.has(`B${next}`)) next++;
+      names.add(`B${next}`);
+      await this.db.run(
+        'INSERT INTO beds (pg_id, bed_label, bed_type, rent, status) VALUES (?, ?, ?, ?, ?)',
+        pg.id,
+        `B${next}`,
+        type,
+        rent ?? null,
+        'Available',
+      );
+    };
+
+    let count = beds.length;
+    for (const line of priceLines(pg)) {
+      const ofType = beds.filter((b) => b.bed_type === line.label);
+      for (const b of ofType) {
+        if (b.rent !== line.price) await this.db.run('UPDATE beds SET rent = ? WHERE id = ?', line.price, b.id);
       }
+      // Never more beds than the PG's total (e.g. after a line is renamed).
+      for (let i = ofType.length; i < (line.beds || 0) && count < (pg.total_beds || 0); i++, count++) await add(line.label, line.price);
     }
-    if (resourceName === 'agreements' && row.status === 'Active' && (row.room_id || row.bed_id)) {
-      // Keep the tenant's current room and bed in step with their active agreement.
-      const tenant = await this.db.get('SELECT * FROM tenants WHERE id = ?', row.tenant_id);
-      const today = localToday();
-      const current = row.start_date <= today && row.end_date >= today;
-      if (tenant && (current || (!tenant.bed_id && !tenant.room_id))) {
-        const errors = await this.occupancyErrors('tenants', { ...tenant, bed_id: row.bed_id }, tenant);
-        if (Object.keys(errors).length) throw new HttpError(400, 'Validation failed', errors);
-        await this.db.run(
-          `UPDATE tenants SET property_id = ?, room_id = ?, bed_id = ?, updated_at = ${this.db.dialect.now} WHERE id = ?`,
-          row.property_id,
-          row.room_id,
-          row.bed_id,
-          tenant.id,
-        );
-      }
-    }
+    for (; count < (pg.total_beds || 0); count++) await add(null, pg.rent_per_bed);
   }
 
   selectSql(resourceName) {
@@ -376,7 +333,7 @@ class Store {
       }
     }
 
-    // Exact-match filters on any field, e.g. ?status=Active&property_id=3
+    // Exact-match filters on any field, e.g. ?status=Active&pg_id=3
     for (const field of def.fields) {
       if (field.type === 'file' || query[field.name] === undefined || query[field.name] === '') continue;
       const [value, err] = coerce(field, query[field.name]);

@@ -50,95 +50,116 @@ async function call(method, url, body, { auth = cookie, redirect = 'follow' } = 
 test('serves the app shell', async () => {
   const res = await call('GET', '/');
   assert.equal(res.status, 200);
-  assert.match(res.body, /Property Manager/);
+  assert.match(res.body, /PG Manager/);
   assert.equal((await call('GET', '/../package.json')).status, 404);
 });
 
 test('validates required fields and types', async () => {
-  const res = await call('POST', '/api/properties', { type: 'Castle', monthly_rent: 'abc' });
+  const res = await call('POST', '/api/pgs', { total_beds: 'abc', pg_for: 'Castle' });
   assert.equal(res.status, 400);
   assert.ok(res.body.details.name);
   assert.ok(res.body.details.address);
-  assert.ok(res.body.details.type);
-  assert.ok(res.body.details.monthly_rent);
+  assert.ok(res.body.details.total_beds);
+  assert.ok(res.body.details.pg_for);
 });
 
-test('full CRM flow: property, tenant, agreement, payments and reminders', async () => {
-  const property = (await call('POST', '/api/properties', { name: 'Sea Breeze 1A', address: '1 Beach Rd', monthly_rent: 20000 })).body;
-  assert.equal(property.status, 'Vacant', 'default applied');
-
-  const tenant = (await call('POST', '/api/tenants', { full_name: 'Asha Rao', phone: '+91 90000 12345', email: 'asha@example.com', property_id: property.id })).body;
-  assert.equal(tenant.property_id_label, 'Sea Breeze 1A');
-
-  const bad = await call('POST', '/api/agreements', {
-    property_id: property.id, tenant_id: tenant.id, start_date: '2026-05-01', end_date: '2026-04-01', monthly_rent: 20000, rent_due_day: 5,
-  });
-  assert.equal(bad.status, 400);
-  assert.ok(bad.body.details.end_date);
-
-  const agreement = (await call('POST', '/api/agreements', {
-    property_id: property.id, tenant_id: tenant.id, start_date: '2026-07-15', end_date: '2026-11-30', monthly_rent: 20000, rent_due_day: 5,
+test('PG beds come from total beds and qty x rate price lines', async () => {
+  const pg = (await call('POST', '/api/pgs', {
+    name: 'Lines PG', address: 'L Rd', rent_per_bed: 5000,
+    bed_prices: [{ label: '2-sharing AC', beds: '3', price: '9000' }, { label: '', beds: '', price: '' }, { label: '3-sharing', beds: 2, price: 7000.456 }],
   })).body;
-  assert.equal(agreement._label, 'Asha Rao @ Sea Breeze 1A');
-
-  // July paid fully, August partially, September and October not at all.
-  await call('POST', '/api/rent_payments', { agreement_id: agreement.id, period: '2026-07', amount: 20000, paid_on: '2026-07-15' });
-  await call('POST', '/api/rent_payments', { agreement_id: agreement.id, period: '2026-08', amount: 5000, paid_on: '2026-08-05' });
-
-  const rem = (await call('GET', '/api/reminders?today=2026-10-03&days=7')).body;
-  const rent = rem.rent.filter((r) => r.agreement_id === agreement.id);
-  assert.deepEqual(rent.map((r) => [r.period, r.state, r.outstanding]), [
-    ['2026-08', 'overdue', 15000],
-    ['2026-09', 'overdue', 20000],
-    ['2026-10', 'upcoming', 20000],
+  assert.equal(pg.total_beds, 5, 'total beds from the lines');
+  assert.deepEqual(pg.bed_prices, [{ label: '2-sharing AC', beds: 3, price: 9000 }, { label: '3-sharing', beds: 2, price: 7000.46 }]);
+  let beds = (await call('GET', `/api/beds?pg_id=${pg.id}&sort=id&dir=asc`)).body;
+  assert.deepEqual(beds.map((b) => [b.bed_label, b.bed_type, b.rent]), [
+    ['B1', '2-sharing AC', 9000], ['B2', '2-sharing AC', 9000], ['B3', '2-sharing AC', 9000], ['B4', '3-sharing', 7000.46], ['B5', '3-sharing', 7000.46],
   ]);
-  assert.match(rent[0].message, /Asha Rao/);
-  assert.match(rent[0].links.whatsapp, /^https:\/\/wa\.me\/919000012345\?text=/);
-  assert.match(rent[0].links.email, /^mailto:asha@example\.com/);
 
-  // Agreement ends within 60 days -> renewal reminder.
-  assert.ok(rem.agreements.some((a) => a.agreement_id === agreement.id && a.state === 'expiring'));
-
-  // Logging a reminder shows up as last_reminded.
-  assert.equal((await call('POST', '/api/reminders/log', { key: rent[0].key, channel: 'whatsapp' })).status, 201);
-  const rem2 = (await call('GET', '/api/reminders?today=2026-10-03&days=7')).body;
-  assert.equal(rem2.rent.find((r) => r.key === rent[0].key).last_reminded.channel, 'whatsapp');
-
-  const dash = (await call('GET', '/api/dashboard?today=2026-10-03')).body;
-  assert.equal(dash.rent.expected_this_month, 20000);
-  assert.ok(dash.rent.overdue_total >= 35000);
-
-  // Property with an agreement cannot be deleted (RESTRICT).
-  assert.equal((await call('DELETE', `/api/properties/${property.id}`)).status, 409);
-  // Deleting the agreement cascades to its payments.
-  assert.equal((await call('DELETE', `/api/agreements/${agreement.id}`)).status, 200);
-  const payments = (await call('GET', `/api/rent_payments?agreement_id=${agreement.id}`)).body;
-  assert.equal(payments.length, 0);
+  // More total beds adds beds at the default rate; a new rate updates that type's beds.
+  const bad = await call('PATCH', `/api/pgs/${pg.id}`, { total_beds: 4 });
+  assert.match(bad.body.details.total_beds, /less than the 5 beds/);
+  await call('PATCH', `/api/pgs/${pg.id}`, { total_beds: 7, bed_prices: [{ label: '2-sharing AC', beds: 3, price: 9500 }, { label: '3-sharing', beds: 2, price: 7000 }] });
+  beds = (await call('GET', `/api/beds?pg_id=${pg.id}&sort=id&dir=asc`)).body;
+  assert.equal(beds.length, 7);
+  assert.deepEqual(beds.slice(5).map((b) => [b.bed_label, b.bed_type, b.rent]), [['B6', null, 5000], ['B7', null, 5000]]);
+  assert.equal(beds[0].rent, 9500);
+  const row = (await call('GET', `/api/pgs/${pg.id}`)).body;
+  assert.deepEqual([row.bed_count, row.occupied_beds, row.booked_beds], [7, 0, 0]);
+  assert.match((await call('GET', `/api/pgs/export.csv?q=Lines`)).body, /2-sharing AC \(3 beds\): 9500/);
 });
 
-test('bills, schedules and search/filter', async () => {
-  const property = (await call('POST', '/api/properties', { name: 'Hill Top', address: 'Hill Rd' })).body;
-  const bill = (await call('POST', '/api/bills', { property_id: property.id, category: 'Water', amount: 450.456, due_date: '2026-10-01' })).body;
+test('guests: bed links PG and rent, one guest per bed, check-out frees the bed', async () => {
+  const pg = (await call('POST', '/api/pgs', { name: 'Guest PG', address: 'G Rd', bed_prices: [{ label: 'Single', beds: 2, price: 12000 }] })).body;
+  const other = (await call('POST', '/api/pgs', { name: 'Other PG', address: 'O Rd', total_beds: 1 })).body;
+  const [b1, b2] = (await call('GET', `/api/beds?pg_id=${pg.id}&sort=id&dir=asc`)).body;
+
+  const g1 = await call('POST', '/api/guests', { full_name: 'Asha', phone: '+91 90000 00001', bed_id: b1.id, check_in: '2026-09-12' });
+  assert.equal(g1.status, 201);
+  assert.equal(g1.body.pg_id, pg.id, 'bed fills in the PG');
+  assert.equal(g1.body.rent, 12000, 'rent from the bed');
+  assert.equal(g1.body.bed_id_label, `B1 · Guest PG`);
+  assert.equal(g1.body.status, 'Active');
+
+  const dup = await call('POST', '/api/guests', { full_name: 'Meera', phone: '1', bed_id: b1.id });
+  assert.match(dup.body.details.bed_id, /already occupied by Asha/);
+  const wrong = await call('POST', '/api/guests', { full_name: 'Meera', phone: '1', pg_id: other.id, bed_id: b2.id });
+  assert.match(wrong.body.details.bed_id, /not in the selected PG/);
+  const booked = (await call('POST', '/api/guests', { full_name: 'Meera', phone: '1', bed_id: b2.id, status: 'Booked', check_in: '2026-10-08' })).body;
+  assert.match((await call('POST', '/api/guests', { full_name: 'Zoya', phone: '2', bed_id: b2.id })).body.details.bed_id, /booked for Meera/);
+  assert.ok((await call('GET', '/api/guests?phone=')).status === 200);
+
+  let bed = (await call('GET', `/api/beds/${b1.id}`)).body;
+  assert.deepEqual([bed.guest_name, bed.guest_status], ['Asha', 'Active']);
+  let row = (await call('GET', `/api/pgs/${pg.id}`)).body;
+  assert.deepEqual([row.occupied_beds, row.booked_beds, row.guest_count], [1, 1, 1]);
+
+  // A bed under maintenance can't take a new guest.
+  await call('PATCH', `/api/guests/${booked.id}`, { status: 'Checked out' });
+  await call('PATCH', `/api/beds/${b2.id}`, { status: 'Under Maintenance' });
+  assert.match((await call('POST', '/api/guests', { full_name: 'Zoya', phone: '2', bed_id: b2.id })).body.details.bed_id, /under maintenance/);
+
+  // Rent reminders: first month on check-in, then on the PG's due day; payments clear them.
+  let rem = (await call('GET', '/api/reminders?today=2026-10-07&days=0')).body;
+  const mine = rem.rent.filter((r) => r.guest_id === g1.body.id);
+  assert.deepEqual(mine.map((r) => [r.period, r.due_date, r.state, r.outstanding]), [['2026-09', '2026-09-12', 'overdue', 12000], ['2026-10', '2026-10-05', 'overdue', 12000]]);
+  assert.equal(mine[0].place, 'Guest PG, B1');
+  assert.match(mine[0].links.whatsapp, /^https:\/\/wa\.me\/919000000001\?text=/);
+  await call('POST', '/api/payments', { guest_id: g1.body.id, period: '2026-09', amount: 12000, paid_on: '2026-09-12' });
+  await call('POST', '/api/payments', { guest_id: g1.body.id, kind: 'Deposit', period: '2026-10', amount: 12000, paid_on: '2026-10-01' });
+  rem = (await call('GET', '/api/reminders?today=2026-10-07&days=0')).body;
+  assert.deepEqual(rem.rent.filter((r) => r.guest_id === g1.body.id).map((r) => r.period), ['2026-10'], 'deposits are not rent');
+
+  // Check-out reminder, then checking out frees the bed and fills the date.
+  await call('PATCH', `/api/guests/${g1.body.id}`, { check_out: '2026-10-10' });
+  rem = (await call('GET', '/api/reminders?today=2026-10-07')).body;
+  assert.ok(rem.stays.some((x) => x.type === 'checkout' && x.guest_id === g1.body.id && x.days_left === 3));
+  const out = (await call('PATCH', `/api/guests/${g1.body.id}`, { status: 'Checked out', check_out: null })).body;
+  assert.ok(out.check_out, 'check-out date filled in');
+  bed = (await call('GET', `/api/beds/${b1.id}`)).body;
+  assert.equal(bed.guest_name, null);
+  assert.equal((await call('POST', '/api/guests', { full_name: 'Next', phone: '3', bed_id: b1.id })).status, 201, 'bed is free again');
+
+  const dash = (await call('GET', '/api/dashboard')).body;
+  assert.ok(dash.beds.total >= 3 && dash.beds.occupied >= 1);
+  assert.equal(dash.beds.total, dash.beds.occupied + dash.beds.booked + dash.beds.blocked + dash.beds.vacant);
+  const opts = (await call('GET', '/api/beds/options')).body;
+  assert.equal(opts.find((o) => o.id === b1.id).parent, pg.id);
+  assert.equal(opts.find((o) => o.id === b1.id).occupant, 'Next');
+});
+
+test('expenses, search and filter', async () => {
+  const pg = (await call('POST', '/api/pgs', { name: 'Hill Top', address: 'Hill Rd' })).body;
+  const bill = (await call('POST', '/api/bills', { pg_id: pg.id, category: 'Groceries', amount: 450.456, due_date: '2026-10-01' })).body;
   assert.equal(bill.amount, 450.46);
   assert.equal(bill.status, 'Unpaid');
-
   let rem = (await call('GET', '/api/reminders?today=2026-10-03')).body;
   assert.equal(rem.bills.find((b) => b.bill_id === bill.id).state, 'overdue');
-
   const updated = (await call('PATCH', `/api/bills/${bill.id}`, { status: 'Paid', paid_on: '2026-10-03' })).body;
-  assert.equal(updated.status, 'Paid');
-  assert.equal(updated.category, 'Water', 'partial update keeps other fields');
+  assert.equal(updated.category, 'Groceries', 'partial update keeps other fields');
   rem = (await call('GET', '/api/reminders?today=2026-10-03')).body;
   assert.ok(!rem.bills.some((b) => b.bill_id === bill.id));
-
-  await call('POST', '/api/schedules', { title: 'Inspection', starts_at: '2026-10-04T09:30', property_id: property.id });
-  rem = (await call('GET', '/api/reminders?today=2026-10-03&days=1')).body;
-  assert.ok(rem.schedules.some((s) => s.title === 'Inspection' && s.property_name === 'Hill Top'));
-
-  const found = (await call('GET', '/api/bills?q=Hill')).body;
-  assert.ok(found.some((b) => b.id === bill.id), 'search matches referenced property name');
-  const filtered = (await call('GET', '/api/bills?status=Unpaid')).body;
-  assert.ok(!filtered.some((b) => b.id === bill.id));
+  assert.ok((await call('GET', '/api/bills?q=Hill')).body.some((b) => b.id === bill.id), 'search matches the PG name');
+  assert.ok(!(await call('GET', '/api/bills?status=Unpaid')).body.some((b) => b.id === bill.id));
 });
 
 test('document upload, download, verification and cleanup', async () => {
@@ -184,17 +205,19 @@ test('CSV export neutralises formulas', async () => {
 
 test('unknown resources and ids are rejected', async () => {
   assert.equal((await call('GET', '/api/users')).status, 404);
-  assert.equal((await call('GET', '/api/properties/abc')).status, 404);
-  assert.equal((await call('GET', '/api/properties/99999')).status, 404);
-  assert.equal((await call('GET', '/api/properties?sort=name;DROP TABLE x')).status, 200);
+  assert.equal((await call('GET', '/api/pgs/abc')).status, 404);
+  assert.equal((await call('GET', '/api/pgs/99999')).status, 404);
+  assert.equal((await call('GET', '/api/pgs?sort=name;DROP TABLE x')).status, 200);
 });
 
 test('due date rules', () => {
-  const a = { start_date: '2026-01-20', end_date: '2026-12-10', rent_due_day: 5 };
-  assert.equal(dueDateFor(a, '2026-01'), '2026-01-20', 'first month due on move-in');
-  assert.equal(dueDateFor(a, '2026-02'), '2026-02-05');
-  assert.equal(dueDateFor(a, '2026-12'), '2026-12-05');
-  assert.equal(dueDateFor({ ...a, rent_due_day: 15 }, '2026-12'), null, 'not due after agreement ends');
+  const g = { check_in: '2026-01-20', check_out: '2026-12-10', due_day: 5 };
+  assert.equal(dueDateFor(g, '2026-01'), '2026-01-20', 'first month due on check-in');
+  assert.equal(dueDateFor({ ...g, due_day: 25 }, '2026-01'), '2026-01-25');
+  assert.equal(dueDateFor(g, '2026-02'), '2026-02-05');
+  assert.equal(dueDateFor(g, '2026-12'), '2026-12-05');
+  assert.equal(dueDateFor(g, '2027-01'), null, 'not due after check-out');
+  assert.equal(dueDateFor(g, '2025-12'), null, 'not due before check-in');
 });
 
 test('signup validation, login, logout and sessions', async () => {
@@ -206,7 +229,7 @@ test('signup validation, login, logout and sessions', async () => {
   assert.match(dup.body.details.phone, /already exists/);
 
   // Not logged in: API is 401, pages redirect to the login page.
-  assert.equal((await call('GET', '/api/properties', null, { auth: '' })).status, 401);
+  assert.equal((await call('GET', '/api/pgs', null, { auth: '' })).status, 401);
   const page = await call('GET', '/', null, { auth: '', redirect: 'manual' });
   assert.equal(page.status, 302);
   assert.equal(page.headers.get('location'), '/login');
@@ -229,7 +252,7 @@ test('signup validation, login, logout and sessions', async () => {
   assert.equal((await call('GET', '/api/auth/me')).status, 200, 'other sessions stay logged in');
 
   // Writes without the X-Requested-With header are refused (CSRF protection).
-  const csrf = await fetch(`${base}/api/properties`, { method: 'POST', headers: { Cookie: cookie, 'Content-Type': 'application/json' }, body: '{}' });
+  const csrf = await fetch(`${base}/api/pgs`, { method: 'POST', headers: { Cookie: cookie, 'Content-Type': 'application/json' }, body: '{}' });
   assert.equal(csrf.status, 403);
 });
 
@@ -238,17 +261,19 @@ test('each company only sees its own data; sample data and feedback', async () =
   assert.equal(signup.body.company.phone, '+447700900123');
   const other = signup.headers.get('set-cookie').split(';')[0];
 
-  assert.deepEqual((await call('GET', '/api/properties', null, { auth: other })).body, []);
-  const mine = (await call('GET', '/api/properties')).body;
+  assert.deepEqual((await call('GET', '/api/pgs', null, { auth: other })).body, []);
+  const mine = (await call('GET', '/api/pgs')).body;
   assert.ok(mine.length > 0);
-  assert.equal((await call('GET', `/api/properties/${mine[0].id}`, null, { auth: other })).status, 404);
+  assert.equal((await call('GET', `/api/pgs/${mine[0].id}`, null, { auth: other })).status, 404);
 
   const cfg = (await call('GET', '/api/config', null, { auth: other })).body;
   assert.equal(cfg.company.company_name, 'Second Co');
   assert.equal(cfg.empty, true);
   assert.equal((await call('POST', '/api/sample-data', null, { auth: other })).status, 201);
-  const props = (await call('GET', '/api/properties', null, { auth: other })).body;
-  assert.ok(props.some((p) => p.type === 'PG / Hostel'));
+  const pgs = (await call('GET', '/api/pgs', null, { auth: other })).body;
+  assert.deepEqual(pgs.map((p) => [p.name, p.bed_count]).sort(), [['Lotus Ladies Hostel', 8], ['Sunrise PG', 12]]);
+  const dash = (await call('GET', '/api/dashboard', null, { auth: other })).body;
+  assert.deepEqual([dash.beds.total, dash.beds.occupied, dash.beds.booked], [20, 7, 1]);
   assert.equal((await call('POST', '/api/sample-data', null, { auth: other })).status, 409, 'only into an empty account');
 
   assert.equal((await call('POST', '/api/feedback', { message: 'Love the bed board', page: '#/bedboard' }, { auth: other })).status, 201);
@@ -276,106 +301,4 @@ test('invite code is required when configured', async () => {
     await invitedDb.drop();
     fs.rmSync(dir, { recursive: true, force: true });
   }
-});
-
-test('PG / hostel has total beds and bed price; other types have rent, area and status', async () => {
-  const hostel = (await call('POST', '/api/properties', { name: 'Bed Count Hostel', type: 'PG / Hostel', address: 'H Rd', total_beds: 10, rent_per_bed: 6500, monthly_rent: 99, status: 'Occupied', units: 4 })).body;
-  assert.deepEqual([hostel.total_beds, hostel.rent_per_bed], [10, 6500]);
-  assert.deepEqual([hostel.monthly_rent, hostel.status, hostel.units], [null, null, null], 'whole-property fields are cleared for a PG');
-
-  // New rooms take the hostel's bed price; tenants fill beds even before one is picked.
-  const room = (await call('POST', '/api/rooms', { property_id: hostel.id, room_number: 'G1', total_beds: 2 })).body;
-  assert.equal(room.rent_per_bed, 6500);
-  await call('POST', '/api/tenants', { full_name: 'Asha', property_id: hostel.id });
-  const before = (await call('GET', '/api/dashboard')).body.beds;
-  let row = (await call('GET', `/api/properties/${hostel.id}`)).body;
-  assert.deepEqual([row.bed_count, row.tenant_count], [2, 1]);
-
-  // Switching to a shop clears the bed fields and keeps the shop ones.
-  const shop = (await call('PATCH', `/api/properties/${hostel.id}`, { type: 'Shop', area_sqft: 300, furnishing: 'Bare shell', monthly_rent: 30000 })).body;
-  assert.deepEqual([shop.total_beds, shop.rent_per_bed, shop.pg_for], [null, null, null]);
-  assert.deepEqual([shop.area_sqft, shop.furnishing, shop.monthly_rent], [300, 'Bare shell', 30000]);
-  const after = (await call('GET', '/api/dashboard')).body.beds;
-  assert.equal(before.total - after.total, 8, 'the 10 planned beds became the 2 real ones');
-  assert.equal(before.occupied - after.occupied, 1);
-
-  // Bed prices fill an empty bed count; floor prices are for other types.
-  const priced = await call('POST', '/api/properties', {
-    name: 'Priced PG', type: 'PG / Hostel', address: 'P',
-    bed_prices: [{ label: '2-sharing AC', beds: '4', price: '9000' }, { label: '', beds: '', price: '' }, { label: 'Ground floor', beds: 6, price: 7000.456 }],
-  });
-  assert.equal(priced.status, 201);
-  assert.deepEqual(priced.body.bed_prices, [{ label: '2-sharing AC', beds: 4, price: 9000 }, { label: 'Ground floor', beds: 6, price: 7000.46 }]);
-  assert.equal(priced.body.total_beds, 10);
-  const bad = await call('POST', '/api/properties', { name: 'Bad', type: 'PG / Hostel', address: 'P', bed_prices: [{ label: 'No price' }] });
-  assert.equal(bad.status, 400);
-  assert.match(bad.body.details.bed_prices, /needs a price/);
-  const floors = (await call('PATCH', `/api/properties/${priced.body.id}`, { type: 'Office', floor_prices: [{ label: '1st floor', area: 2000, price: 80000 }] })).body;
-  assert.deepEqual([floors.bed_prices, floors.floor_prices], [null, [{ label: '1st floor', area: 2000, price: 80000 }]]);
-  const csv = (await call('GET', '/api/properties/export.csv?q=Priced')).body;
-  assert.match(csv, /1st floor \(2000 sq ft\): 80000/);
-
-  for (const type of ['Villa', 'Apartment', 'SOHO', 'Office Cabin', 'Shop']) {
-    assert.equal((await call('POST', '/api/properties', { name: type, type, address: 'A' })).status, 201);
-  }
-  assert.equal((await call('POST', '/api/properties', { name: 'Bad', type: 'Castle', address: 'A' })).status, 400);
-});
-
-test('PG rooms and beds: auto beds, linking, occupancy and rent', async () => {
-  const pg = (await call('POST', '/api/properties', { name: 'Test PG', type: 'PG / Hostel', address: 'PG Rd', pg_for: 'Ladies', meals: 'All 3 meals', gate_timings: 'Gate closes 10 pm' })).body;
-  const other = (await call('POST', '/api/properties', { name: 'Other', type: 'Independent House', address: 'X' })).body;
-  const room = (await call('POST', '/api/rooms', { property_id: pg.id, room_number: '101', sharing: 'Triple', total_beds: 3, rent_per_bed: 8000 })).body;
-  assert.equal(room._label, 'Room 101 · Test PG');
-  assert.equal(room.bed_count, 3, 'beds created automatically');
-
-  let beds = (await call('GET', `/api/beds?room_id=${room.id}&sort=bed_label&dir=asc`)).body;
-  assert.deepEqual(beds.map((b) => [b.bed_label, b.monthly_rent, b.occupant]), [['Bed 1', 8000, null], ['Bed 2', 8000, null], ['Bed 3', 8000, null]]);
-
-  // Raising the bed count adds beds; it never removes them.
-  await call('PATCH', `/api/rooms/${room.id}`, { total_beds: 4 });
-  assert.equal((await call('GET', `/api/rooms/${room.id}`)).body.bed_count, 4);
-
-  // Picking a bed fills in the room and property.
-  const t1 = (await call('POST', '/api/tenants', { full_name: 'Priya', bed_id: beds[0].id })).body;
-  assert.equal(t1.room_id, room.id);
-  assert.equal(t1.property_id, pg.id);
-  assert.equal(t1.bed_id_label, 'Bed 1 · Room 101 · Test PG');
-
-  // A bed can't be given to two active tenants, or to a room/property it isn't in.
-  const dup = await call('POST', '/api/tenants', { full_name: 'Meera', bed_id: beds[0].id });
-  assert.equal(dup.status, 400);
-  assert.match(dup.body.details.bed_id, /already occupied by Priya/);
-  const wrong = await call('POST', '/api/tenants', { full_name: 'Meera', property_id: other.id, room_id: room.id });
-  assert.match(wrong.body.details.room_id, /not in the selected property/);
-  assert.equal((await call('POST', '/api/tenants', { full_name: 'Former', bed_id: beds[0].id, status: 'Former' })).status, 201);
-
-  // Agreement rent defaults to the bed rent; overlapping agreements on a bed are rejected.
-  const t2 = (await call('POST', '/api/tenants', { full_name: 'Meera' })).body;
-  const agr = await call('POST', '/api/agreements', { tenant_id: t2.id, bed_id: beds[1].id, start_date: '2026-10-01', end_date: '2027-09-30', rent_due_day: 5 });
-  assert.equal(agr.status, 201);
-  assert.equal(agr.body.monthly_rent, 8000);
-  assert.equal(agr.body.property_id, pg.id);
-  const t2After = (await call('GET', `/api/tenants/${t2.id}`)).body;
-  assert.equal(t2After.bed_id, beds[1].id, 'tenant moved onto the agreement bed');
-  const overlap = await call('POST', '/api/agreements', { tenant_id: t1.id, bed_id: beds[1].id, start_date: '2027-01-01', end_date: '2027-12-31', monthly_rent: 8000, rent_due_day: 5 });
-  assert.equal(overlap.status, 400);
-  assert.match(overlap.body.details.bed_id, /active agreement with Meera/);
-
-  const rem = (await call('GET', '/api/reminders?today=2026-10-06&days=0')).body;
-  const r = rem.rent.find((x) => x.agreement_id === agr.body.id);
-  assert.equal(r.property_name, 'Test PG, Room 101, Bed 2');
-  assert.match(r.message, /Test PG, Room 101, Bed 2/);
-
-  beds = (await call('GET', `/api/beds?room_id=${room.id}`)).body;
-  assert.equal(beds.filter((b) => b.occupant).length, 2);
-  const prop = (await call('GET', `/api/properties/${pg.id}`)).body;
-  assert.deepEqual([prop.room_count, prop.bed_count, prop.occupied_beds], [1, 4, 2]);
-  const dash = (await call('GET', '/api/dashboard')).body;
-  assert.ok(dash.beds.total >= 4 && dash.beds.occupied >= 2);
-
-  const opts = (await call('GET', '/api/beds/options')).body;
-  assert.equal(opts.find((o) => o.id === beds.find((b) => b.occupant === 'Priya').id).parent, room.id);
-
-  // A room whose bed has an agreement can't be deleted.
-  assert.equal((await call('DELETE', `/api/rooms/${room.id}`)).status, 409);
 });

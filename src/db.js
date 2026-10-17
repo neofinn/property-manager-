@@ -1,6 +1,6 @@
 'use strict';
 
-// Creates and migrates one company's CRM tables on any backend in
+// Creates and migrates one company's PG Manager tables on any backend in
 // src/database (SQLite file, sql.js in the browser, or a Postgres schema).
 
 const { resources } = require('./schema');
@@ -61,13 +61,6 @@ async function initSchema(db) {
     }
   }
 
-  // Data migrations for renamed options.
-  await db.run("UPDATE properties SET type = 'PG / Hostel' WHERE type = 'PG'");
-  const q = dialect.columnsSql('properties');
-  if ((await db.all(q.sql, ...q.params)).some((c) => c.name === 'food_included')) {
-    await db.run("UPDATE properties SET meals = 'All 3 meals' WHERE food_included = 1 AND meals IS NULL");
-  }
-
   await db.exec(`
     CREATE TABLE IF NOT EXISTS reminder_log (
       ${dialect.idColumn},
@@ -77,9 +70,10 @@ async function initSchema(db) {
     );
     CREATE TABLE IF NOT EXISTS files (stored TEXT PRIMARY KEY, data ${dialect.blob} NOT NULL);
     CREATE INDEX IF NOT EXISTS reminder_log_key ON reminder_log(reminder_key);
-    CREATE INDEX IF NOT EXISTS rent_payments_agreement ON rent_payments(agreement_id, period);
+    CREATE INDEX IF NOT EXISTS payments_guest ON payments(guest_id, period);
+    CREATE INDEX IF NOT EXISTS guests_bed ON guests(bed_id, status);
+    CREATE INDEX IF NOT EXISTS beds_pg ON beds(pg_id);
     CREATE INDEX IF NOT EXISTS bills_due ON bills(status, due_date);
-    CREATE INDEX IF NOT EXISTS schedules_start ON schedules(starts_at);
   `);
   return db;
 }

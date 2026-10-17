@@ -1,13 +1,13 @@
 'use strict';
 
-// Builds supabase/functions/api/index.js: the API as one Supabase Edge
-// Function (Deno). The pages are served separately (GitHub Pages, see
+// Builds supabase/functions/pg-manager/index.js: the PG Manager API as one
+// Supabase Edge Function (Deno), served at /functions/v1/pg-manager/api/... The pages are served separately (GitHub Pages, see
 // scripts/build-pages.js). Usage: npm run build:edge
 //
 // Function settings (Supabase → Edge Functions → Secrets):
-//   ADMIN_PASSWORD   turns on /api/admin (required for the admin page)
+//   PGM_ADMIN_PASSWORD (or ADMIN_PASSWORD) turns on /api/admin
 //   ALLOWED_ORIGINS  comma-separated page origins (default https://neofinn.github.io)
-//   BETA_INVITE_CODE optional; can also be set in the admin page
+//   PGM_INVITE_CODE  optional; can also be set in the admin page
 // SUPABASE_DB_URL is provided by Supabase automatically.
 
 const fs = require('node:fs');
@@ -38,8 +38,8 @@ const { createEdgeHandler } = ${bundle('src/edge/handler.js', 'externalRequire')
 
 const handler = createEdgeHandler({
   databaseUrl: Deno.env.get("SUPABASE_DB_URL"),
-  adminPassword: Deno.env.get("ADMIN_PASSWORD") || "",
-  inviteCode: Deno.env.get("BETA_INVITE_CODE") || "",
+  adminPassword: Deno.env.get("PGM_ADMIN_PASSWORD") || Deno.env.get("ADMIN_PASSWORD") || "",
+  inviteCode: Deno.env.get("PGM_INVITE_CODE") || "",
   // Each warm function instance keeps a few database connections open.
   poolSize: 3,
   allowedOrigins: (Deno.env.get("ALLOWED_ORIGINS") || "https://neofinn.github.io").split(",").map((s) => s.trim()),
@@ -48,7 +48,7 @@ const handler = createEdgeHandler({
 Deno.serve(handler);
 `;
 
-const out = path.join(root, 'supabase', 'functions', 'api', 'index.js');
+const out = path.join(root, 'supabase', 'functions', 'pg-manager', 'index.js');
 fs.mkdirSync(path.dirname(out), { recursive: true });
 fs.writeFileSync(out, source);
 console.log(`Wrote ${path.relative(root, out)} (${(source.length / 1024).toFixed(0)} KB)`);

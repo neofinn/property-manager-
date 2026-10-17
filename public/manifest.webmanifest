@@ -1,7 +1,7 @@
 {
-  "name": "Property Manager",
-  "short_name": "PropManager",
-  "description": "Properties, PGs, tenants, rent and reminders in one place",
+  "name": "PG Manager",
+  "short_name": "PG Manager",
+  "description": "Beds, guests, rent and reminders for your PG",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

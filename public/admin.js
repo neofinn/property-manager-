@@ -152,8 +152,8 @@
       <section class="stats">
         ${tile('Companies', num.format(a.companies.total), `${a.companies.new_7d} new this week · ${a.companies.new_30d} this month`)}
         ${tile('Active this week', num.format(a.companies.active_7d), `${a.companies.total ? Math.round((a.companies.active_7d / a.companies.total) * 100) : 0}% of companies`)}
-        ${tile('Properties managed', num.format(t.properties), `${num.format(t.tenants)} active tenants`)}
-        ${tile('PG / hostel beds', `${num.format(t.occupied_beds)}/${num.format(t.beds)}`, 'occupied / total')}
+        ${tile('PGs managed', num.format(t.pgs), `${num.format(t.guests)} active guests`)}
+        ${tile('Beds', `${num.format(t.occupied_beds)}/${num.format(t.beds)}`, 'occupied / total')}
         ${tile('Rent recorded this month', inr.format(t.rent_collected_this_month), 'across all companies')}
         ${tile('Open feedback', num.format(a.feedback_open), a.companies.suspended ? `${a.companies.suspended} suspended compan${a.companies.suspended === 1 ? 'y' : 'ies'}` : 'no suspended companies')}
       </section>
@@ -172,15 +172,15 @@
     main.innerHTML = `
       <div class="page-head"><h2>Companies</h2><span class="muted">${rows.length} total</span></div>
       ${rows.length ? `<div class="table-wrap"><table class="admin-table">
-        <thead><tr><th>Company</th><th>Manager · phone</th><th>Status</th><th class="num">Properties</th><th class="num">Tenants</th><th class="num">Beds</th><th>Signed up</th><th>Last active</th><th class="actions-col"><span class="sr-only">Actions</span></th></tr></thead>
+        <thead><tr><th>Company</th><th>Manager · phone</th><th>Status</th><th class="num">PGs</th><th class="num">Guests</th><th class="num">Beds</th><th>Signed up</th><th>Last active</th><th class="actions-col"><span class="sr-only">Actions</span></th></tr></thead>
         <tbody>${rows
           .map(
             (c) => `<tr>
             <td data-label="Company"><strong>${esc(c.company_name)}</strong> <span class="muted small">#${c.id}</span></td>
             <td data-label="Manager">${esc(c.manager_name)}<br><span class="muted small">${esc(c.phone)}</span></td>
             <td data-label="Status"><span class="pill ${c.status === 'active' ? 'good' : 'bad'}">${c.status === 'active' ? 'Active' : 'Suspended'}</span></td>
-            <td data-label="Properties" class="num">${c.stats?.error ? '!' : num.format(c.stats?.properties ?? 0)}</td>
-            <td data-label="Tenants" class="num">${num.format(c.stats?.tenants ?? 0)}</td>
+            <td data-label="PGs" class="num">${c.stats?.error ? '!' : num.format(c.stats?.pgs ?? 0)}</td>
+            <td data-label="Guests" class="num">${num.format(c.stats?.guests ?? 0)}</td>
             <td data-label="Beds" class="num">${num.format(c.stats?.occupied_beds ?? 0)}/${num.format(c.stats?.beds ?? 0)}</td>
             <td data-label="Signed up">${esc(when(c.created_at))}</td>
             <td data-label="Last active">${esc(when(c.last_active_at))}</td>
@@ -311,7 +311,7 @@
       } else if (act === 'delete') {
         const confirm = await ask({
           title: `Delete ${company.company_name}?`,
-          text: 'This permanently deletes the company, its login and all of its properties, tenants, payments and documents. Export it first if you may need it.',
+          text: 'This permanently deletes the company, its login and all of its PGs, beds, guests, payments and documents. Export it first if you may need it.',
           label: `Type ${company.company_name} to confirm`,
           okLabel: 'Delete for good',
           danger: true,

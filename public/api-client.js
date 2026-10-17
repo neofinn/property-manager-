@@ -31,7 +31,7 @@
   };
 
   const isAdmin = (url) => url.startsWith('/api/admin');
-  const tokenKey = (url) => (isAdmin(url) ? 'pm-admin-session' : 'pm-session');
+  const tokenKey = (url) => (isAdmin(url) ? 'pgm-admin-session' : 'pgm-session');
   const tokenHeader = (url) => (isAdmin(url) ? 'X-Admin-Session' : 'X-Session');
   const issuesToken = /^\/api\/(auth\/(login|signup|logout)|admin\/(login|logout))$/;
 

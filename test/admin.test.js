@@ -90,9 +90,9 @@ test('analytics across companies', async () => {
   assert.equal(stats.signups.length, 30);
   assert.equal(stats.signups.at(-1).count, 2);
   const alpha = stats.rows.find((r) => r.company_name === 'Alpha Homes');
-  assert.equal(alpha.stats.properties, 5);
-  assert.ok(alpha.stats.beds >= 6);
-  assert.equal(stats.totals.properties, 5);
+  assert.equal(alpha.stats.pgs, 2);
+  assert.equal(alpha.stats.beds, 20);
+  assert.equal(stats.totals.pgs, 2);
   assert.equal(alpha.password_hash, undefined, 'no password hashes in analytics');
 });
 
@@ -111,7 +111,7 @@ test('platform settings: closing sign-ups, invite code, maintenance mode', async
   const cfg = (await call('GET', '/api/config', null, user.cookie)).body;
   assert.equal(cfg.readOnly, true);
   assert.match(cfg.notice, /Upgrading/);
-  assert.equal((await call('GET', '/api/properties', null, user.cookie)).status, 200, 'reads still work');
+  assert.equal((await call('GET', '/api/pgs', null, user.cookie)).status, 200, 'reads still work');
   const blocked = await call('POST', '/api/contacts', { name: 'X' }, user.cookie);
   assert.equal(blocked.status, 503);
   assert.match(blocked.body.error, /Upgrading/);
@@ -122,7 +122,7 @@ test('platform settings: closing sign-ups, invite code, maintenance mode', async
 test('company controls: suspend, reset password, sign out, export, delete', async () => {
   const user = await signup('Delta Stays', '9000000004');
   const id = user.company.id;
-  await call('POST', '/api/properties', { name: 'Delta PG', type: 'PG / Hostel', address: 'Road 1' }, user.cookie);
+  await call('POST', '/api/pgs', { name: 'Delta PG', address: 'Road 1' }, user.cookie);
 
   await admin('POST', `/companies/${id}/suspend`);
   assert.equal((await call('GET', '/api/config', null, user.cookie)).status, 401, 'suspension signs the company out');
@@ -141,7 +141,7 @@ test('company controls: suspend, reset password, sign out, export, delete', asyn
 
   const exported = await admin('GET', `/companies/${id}/export`);
   assert.match(exported.headers.get('content-disposition'), /attachment/);
-  assert.equal(exported.body.data.properties[0].name, 'Delta PG');
+  assert.equal(exported.body.data.pgs[0].name, 'Delta PG');
 
   assert.equal((await admin('DELETE', `/companies/${id}`, { confirm: 'wrong' })).status, 400);
   assert.equal((await admin('DELETE', `/companies/${id}`, { confirm: 'Delta Stays' })).status, 200);

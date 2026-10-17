@@ -380,8 +380,12 @@ main > .form-error { margin: 0; }
 .bed.vacant, .bed-dot.vacant { background: var(--good-bg); border-color: var(--good); }
 .bed.vacant { color: var(--good); }
 .bed.occupied, .bed-dot.occupied { background: var(--accent-soft); border-color: var(--accent); }
-.bed.blocked, .bed-dot.blocked { background: var(--warn-bg); border-color: var(--warn); }
-.bed.blocked { color: var(--warn); }
+.bed.booked, .bed-dot.booked { background: var(--warn-bg); border-color: var(--warn); }
+.bed.booked { color: var(--warn); }
+.bed.blocked, .bed-dot.blocked { background: var(--bad-bg); border-color: var(--bad); }
+.bed.blocked { color: var(--bad); }
+.form-section { grid-column: 1 / -1; margin: 10px 0 -4px; padding-top: 10px; border-top: 1px solid var(--border); font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.form-section:first-child { border-top: 0; padding-top: 0; margin-top: 0; }
 .bed:hover { box-shadow: 0 0 0 2px var(--accent-soft); }
 .board-info { margin: -6px 0 12px; }
 

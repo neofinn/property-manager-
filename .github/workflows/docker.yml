@@ -1,10 +1,10 @@
 name: Docker image
 
 # Builds the app image and publishes it to GitHub Container Registry:
-#   docker run -p 3000:3000 -v pm-data:/data ghcr.io/<owner>/<repo>:latest
+#   docker run -p 3000:3000 -v pgm-data:/data ghcr.io/<owner>/<repo>-pg-manager:latest
 on:
   push:
-    branches: [main]
+    branches: [pg-manager]
   workflow_dispatch:
 
 permissions:
@@ -31,7 +31,7 @@ jobs:
         # Image names must be lower case and can't end in "-" (neofinn/property-manager- -> neofinn/property-manager).
         run: |
           name="${GITHUB_REPOSITORY,,}"
-          echo "name=ghcr.io/$(echo "$name" | sed 's/[-_.]*$//')" >> "$GITHUB_OUTPUT"
+          echo "name=ghcr.io/$(echo "$name" | sed 's/[-_.]*$//')-pg-manager" >> "$GITHUB_OUTPUT"
       - uses: docker/build-push-action@v6
         with:
           context: .

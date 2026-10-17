@@ -54,10 +54,10 @@ test('sign up, use the API with a header token, files, logout', async () => {
   const session = signup.body.token;
   assert.ok(session && session.length > 20);
 
-  assert.equal((await call('GET', '/properties')).status, 401);
+  assert.equal((await call('GET', '/pgs')).status, 401);
   assert.equal((await call('GET', '/auth/me', { session })).body.company.company_name, 'Edge Co');
   assert.equal((await call('POST', '/sample-data', { session })).status, 201);
-  assert.equal((await call('GET', '/dashboard', { session })).body.counts.properties, 5);
+  assert.equal((await call('GET', '/dashboard', { session })).body.counts.pgs, 2);
 
   const doc = await call('POST', '/documents', {
     session,
@@ -68,8 +68,8 @@ test('sign up, use the API with a header token, files, logout', async () => {
   assert.equal(file.body, '%PDF edge');
   assert.match(file.headers.get('content-disposition'), /attachment/);
 
-  const csv = await call('GET', '/properties/export.csv', { session });
-  assert.match(csv.body, /^id,name,type/);
+  const csv = await call('GET', '/pgs/export.csv', { session });
+  assert.match(csv.body, /^id,name,address/);
 
   // Writes need the X-Requested-With header.
   const bare = await handle(new Request('https://example.supabase.co/api/contacts', { method: 'POST', headers: { 'X-Session': session }, body: '{}' }));
@@ -89,7 +89,7 @@ test('admin area over header tokens', async () => {
   const admin = login.body.token;
   const stats = (await call('GET', '/admin/analytics', { admin })).body;
   assert.equal(stats.companies.total, 1);
-  assert.equal(stats.totals.properties, 5);
+  assert.equal(stats.totals.pgs, 2);
   const exported = await call('GET', `/admin/companies/${stats.rows[0].id}/export`, { admin });
   assert.match(exported.headers.get('content-disposition'), /attachment/);
   await call('POST', '/admin/logout', { admin });

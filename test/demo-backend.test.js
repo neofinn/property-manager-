@@ -25,7 +25,7 @@ test('in-page backend: sign-up, data, files, logout and a save/reload round trip
   assert.equal(signup.status, 201);
   assert.equal((await call('POST', '/api/auth/signup', { company_name: 'X', manager_name: 'Y', phone: '9845012346', password: 'password1' })).status, 400);
   assert.equal((await call('POST', '/api/sample-data')).status, 201);
-  assert.equal((await call('GET', '/api/dashboard')).json.counts.properties, 5);
+  assert.equal((await call('GET', '/api/dashboard')).json.counts.pgs, 2);
 
   const doc = await call('POST', '/api/documents', { title: 'ID', file: { name: 'a.pdf', type: 'application/pdf', data: Buffer.from('%PDF hi').toString('base64') } });
   const file = await call('GET', doc.json.file_url);
@@ -43,6 +43,6 @@ test('in-page backend: sign-up, data, files, logout and a save/reload round trip
   assert.equal((await call('POST', '/api/auth/login', { phone: '9845012345', password: 'password1' })).status, 200);
 
   backend = await createBackend({ ...options, bytes: backend.export() });
-  assert.equal((await call('GET', '/api/properties')).json.length, 5);
-  assert.equal((await call('DELETE', '/api/properties/1')).status, 409, 'foreign keys still enforced after reload');
+  assert.equal((await call('GET', '/api/pgs')).json.length, 2);
+  assert.equal((await call('POST', '/api/beds', { pg_id: 999, bed_label: 'X' })).status, 409, 'foreign keys still enforced after reload');
 });

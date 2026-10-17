@@ -29,7 +29,7 @@ const wasm = fs.readFileSync(path.join(sqlDir, 'sql-wasm.wasm')).toString('base6
 const appBody = between(read('public/index.html'), '<body>', '<script src="/app.js"></script>');
 const authMain = between(read('public/auth.html'), '<body class="auth-page">', '<script src="/auth.js"></script>');
 
-const html = `<title>Property Manager</title>
+const html = `<title>PG Manager</title>
 <style>
 ${read('public/styles.css')}
 /* Demo page */
@@ -42,7 +42,7 @@ ${read('public/styles.css')}
 html, body { background: var(--bg); }
 </style>
 
-<div class="demo-splash" id="demo-splash">Starting Property Manager…</div>
+<div class="demo-splash" id="demo-splash">Starting PG Manager…</div>
 <p class="demo-banner" id="demo-banner" hidden>Preview mode: changes are not saved. Open this page in claude.ai while signed in to keep your data.</p>
 
 <div class="auth-page" id="auth-screen" hidden>

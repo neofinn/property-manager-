@@ -12,7 +12,7 @@
       document.getElementById(`tab-${m}`).classList.toggle('active', m === mode);
       document.getElementById(`tab-${m}`).setAttribute('aria-selected', String(m === mode));
     }
-    document.title = `Property Manager – ${mode === 'signup' ? 'Sign up' : 'Log in'}`;
+    document.title = `PG Manager – ${mode === 'signup' ? 'Sign up' : 'Log in'}`;
     document.getElementById(`${mode}-form`).querySelector('input').focus();
 
     if (mode === 'signup') {

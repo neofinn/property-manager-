@@ -1,64 +1,89 @@
 'use strict';
 
-// Demo data for trying the app. Beta testers can load it from the dashboard
+// Demo data for trying PG Manager. Beta testers can load it from the dashboard
 // of an empty account, and `npm run seed` creates a demo account with it.
 
 const { localToday, addDays, addMonths } = require('./reminders');
 
 async function isEmpty(db) {
-  return (await db.get('SELECT COUNT(*) AS n FROM properties')).n === 0;
+  return (await db.get('SELECT COUNT(*) AS n FROM pgs')).n === 0;
 }
 
 async function loadSampleData(store) {
   const today = localToday();
   const thisMonth = today.slice(0, 7);
 
-  const owner = await store.create('contacts', { name: 'Ravi Sharma', category: 'Owner', phone: '+91 98765 43210', email: 'ravi@example.com' });
-  const plumber = await store.create('contacts', { name: 'Suresh Plumbing', category: 'Plumber', phone: '+91 91234 56789', available_hours: 'Mon-Sat 9am-7pm' });
-  const warden = await store.create('contacts', { name: 'Mohan (Warden)', category: 'Warden', phone: '+91 90000 55555', available_hours: '24x7 at Sunrise PG' });
-  await store.create('contacts', { name: 'Bright Electricals', category: 'Electrician', phone: '+91 99887 76655', available_hours: 'Daily 10am-8pm' });
+  const owner = await store.create('contacts', { name: 'Ravi Sharma', category: 'Owner', phone: '+91 98765 43210' });
+  const warden = await store.create('contacts', { name: 'Mohan (Warden)', category: 'Warden', phone: '+91 90000 55555', available_hours: '24x7' });
+  await store.create('contacts', { name: 'Lakshmi (Cook)', category: 'Cook', phone: '+91 90000 66666', available_hours: '6 am – 9 pm' });
+  await store.create('contacts', { name: 'Suresh Plumbing', category: 'Plumber', phone: '+91 91234 56789', available_hours: 'Mon-Sat 9am-7pm' });
 
-  const p1 = await store.create('properties', { name: 'Green Park 2BHK', type: 'Apartment', area_sqft: 1150, furnishing: 'Semi-furnished', address: 'Flat 302, Green Park Residency, MG Road', city: 'Bengaluru', units: 1, monthly_rent: 25000, status: 'Occupied', owner_contact_id: owner.id });
-  const p2 = await store.create('properties', { name: 'Lake View Villa', type: 'Villa', floor_prices: [{ label: 'Ground floor', area: 1800, price: 35000 }, { label: 'First floor', area: 1500, price: 25000 }], address: '14 Lake View Road', city: 'Pune', units: 1, monthly_rent: 60000, status: 'Occupied', owner_contact_id: owner.id });
-  const p3 = await store.create('properties', { name: 'City Centre Shop', type: 'Shop', area_sqft: 450, furnishing: 'Bare shell', address: 'Shop 5, City Centre Mall', city: 'Bengaluru', units: 1, monthly_rent: 40000, status: 'Vacant' });
+  const sunrise = await store.create('pgs', {
+    name: 'Sunrise PG',
+    address: '22 4th Cross, Koramangala',
+    city: 'Bengaluru',
+    pg_for: 'Gents',
+    bed_prices: [
+      { label: 'Single AC', beds: 2, price: 13000 },
+      { label: '2-sharing AC', beds: 4, price: 9000 },
+      { label: '3-sharing', beds: 6, price: 7000 },
+    ],
+    rent_due_day: 5,
+    meals: 'Breakfast & dinner',
+    gate_timings: 'Gate closes 10:30 pm',
+    visiting_hours: '10 am – 7 pm',
+    warden_contact_id: warden.id,
+    owner_contact_id: owner.id,
+  });
+  const lotus = await store.create('pgs', {
+    name: 'Lotus Ladies Hostel',
+    address: '9 MG Road',
+    city: 'Pune',
+    pg_for: 'Ladies',
+    total_beds: 8,
+    bed_prices: [{ label: '2-sharing', beds: 4, price: 8500 }],
+    rent_per_bed: 6500,
+    rent_due_day: 1,
+    meals: 'All 3 meals',
+    gate_timings: 'Gate closes 9:30 pm',
+  });
 
-  const t1 = await store.create('tenants', { full_name: 'Anita Desai', phone: '+91 90000 11111', email: 'anita@example.com', property_id: p1.id, unit: '302', move_in: addDays(today, -200), id_type: 'Aadhaar', id_number: 'XXXX-XXXX-1234', status: 'Active' });
-  const t2 = await store.create('tenants', { full_name: 'Karan Mehta', phone: '+91 90000 22222', email: 'karan@example.com', property_id: p2.id, move_in: addDays(today, -330), id_type: 'PAN', id_number: 'ABCDE1234F', status: 'Active' });
-  await store.create('tenants', { full_name: 'Neha Kapoor', phone: '+91 90000 33333', property_id: p3.id, status: 'Prospective' });
+  const beds = async (pg) => store.list('beds', { pg_id: pg.id, sort: 'id', dir: 'asc' });
+  const [s1, , s3, s4, , , s7, s8] = await beds(sunrise);
+  const [l1, l2, , , l5] = await beds(lotus);
 
-  const a1 = await store.create('agreements', { property_id: p1.id, tenant_id: t1.id, start_date: addDays(today, -200), end_date: addDays(today, 165), monthly_rent: 25000, security_deposit: 75000, rent_due_day: 5 });
-  const a2 = await store.create('agreements', { property_id: p2.id, tenant_id: t2.id, start_date: addDays(today, -330), end_date: addDays(today, 35), monthly_rent: 60000, security_deposit: 180000, rent_due_day: 1 });
+  const guest = (bed, data) => store.create('guests', { bed_id: bed.id, status: 'Active', ...data });
+  const g1 = await guest(s1, { full_name: 'Rahul Verma', phone: '+91 90000 44444', check_in: addDays(today, -95), deposit: 13000, occupation: 'Working professional', organisation: 'Infosys', food: 'Veg', id_type: 'Aadhaar', id_number: 'XXXX-XXXX-4321', emergency_name: 'Suresh Verma', emergency_phone: '+91 90000 40000', emergency_relation: 'Father', police_verified: true });
+  const g2 = await guest(s3, { full_name: 'Arjun Nair', phone: '+91 90000 22222', check_in: addDays(today, -60), deposit: 9000, occupation: 'Student', organisation: 'Christ University', food: 'Non-veg', id_type: 'College ID' });
+  await guest(s4, { full_name: 'Vikram Singh', phone: '+91 90000 33333', check_in: addDays(today, -20), check_out: addDays(today, 5), deposit: 9000, occupation: 'Working professional' });
+  await guest(s7, { full_name: 'Imran Khan', phone: '+91 90000 77777', check_in: addDays(today, -10), deposit: 7000, food: 'Non-veg' });
+  await store.create('guests', { full_name: 'Dev Patel', phone: '+91 90000 88888', bed_id: s8.id, status: 'Booked', check_in: addDays(today, 3) });
+  const g6 = await guest(l1, { full_name: 'Priya Iyer', phone: '+91 90000 11111', check_in: addDays(today, -150), deposit: 8500, occupation: 'Working professional', organisation: 'TCS', gender: 'Female', police_verified: true });
+  await guest(l2, { full_name: 'Sneha Kulkarni', phone: '+91 90000 12121', check_in: addDays(today, -45), deposit: 8500, occupation: 'Student', gender: 'Female' });
+  await guest(l5, { full_name: 'Ananya Rao', phone: '+91 90000 13131', check_in: addDays(today, -30), gender: 'Female' });
+  await store.create('guests', { full_name: 'Meera Joshi', phone: '+91 90000 14141', pg_id: lotus.id, status: 'Checked out', check_in: addDays(today, -300), check_out: addDays(today, -40), rent: 6500 });
 
-  // Pay all past months except the current one for tenant 1, and a partial payment for tenant 2.
-  for (let period = a1.start_date.slice(0, 7); period < thisMonth; period = addMonths(period, 1)) {
-    await store.create('rent_payments', { agreement_id: a1.id, period, amount: 25000, paid_on: `${period}-04`, method: 'UPI' });
+  // Rent paid for past months; this month only some guests have paid.
+  const payAll = async (g, upTo) => {
+    for (let period = g.check_in.slice(0, 7); period < upTo; period = addMonths(period, 1)) {
+      await store.create('payments', { guest_id: g.id, kind: 'Rent', period, amount: g.rent, paid_on: `${period}-0${Math.min(g.rent_due_day || 5, 9)}`, method: 'UPI' });
+    }
+  };
+  await payAll(g1, addMonths(thisMonth, 1));
+  await payAll(g2, thisMonth);
+  await payAll(g6, addMonths(thisMonth, 1));
+  for (const g of await store.list('guests', { status: 'Active' })) {
+    if (['Sneha Kulkarni', 'Vikram Singh'].includes(g.full_name)) await payAll(g, thisMonth);
   }
-  for (let period = a2.start_date.slice(0, 7); period < thisMonth; period = addMonths(period, 1)) {
-    await store.create('rent_payments', { agreement_id: a2.id, period, amount: 60000, paid_on: `${period}-01`, method: 'Bank Transfer' });
-  }
-  await store.create('rent_payments', { agreement_id: a2.id, period: thisMonth, amount: 30000, paid_on: today, method: 'Bank Transfer', notes: 'Half paid, rest promised next week' });
+  await store.create('payments', { guest_id: g1.id, kind: 'Deposit', period: g1.check_in.slice(0, 7), amount: 13000, paid_on: g1.check_in, method: 'Bank Transfer' });
 
-  // A PG let out bed-wise and a BnB let out room-wise.
-  const pg = await store.create('properties', { name: 'Sunrise PG', type: 'PG / Hostel', pg_for: 'Gents', meals: 'Breakfast & dinner', gate_timings: 'Gate closes 10:30 pm', visiting_hours: '10 am – 7 pm', warden_contact_id: warden.id, address: '22 4th Cross, Koramangala', city: 'Bengaluru', total_beds: 6, rent_per_bed: 8000, bed_prices: [{ label: 'Single AC', beds: 1, price: 13000 }, { label: '2-sharing AC', beds: 2, price: 9000 }, { label: '3-sharing', beds: 3, price: 7000 }], owner_contact_id: owner.id });
-  const r101 = await store.create('rooms', { property_id: pg.id, room_number: '101', floor: '1', sharing: 'Double', total_beds: 2, rent_per_bed: 9000, ac: true, attached_bath: true });
-  await store.create('rooms', { property_id: pg.id, room_number: '102', floor: '1', sharing: 'Triple', total_beds: 3, rent_per_bed: 7000, attached_bath: true });
-  await store.create('rooms', { property_id: pg.id, room_number: '201', floor: '2', sharing: 'Single', total_beds: 1, rent_per_bed: 13000, ac: true });
-  const [bed1] = await store.list('beds', { room_id: r101.id, sort: 'bed_label', dir: 'asc' });
-  const t4 = await store.create('tenants', { full_name: 'Rahul Verma', phone: '+91 90000 44444', bed_id: bed1.id, move_in: addDays(today, -40), id_type: 'Aadhaar', status: 'Active' });
-  await store.create('agreements', { tenant_id: t4.id, bed_id: bed1.id, start_date: addDays(today, -40), end_date: addDays(today, 325), security_deposit: 18000, rent_due_day: 5 });
-  const bnb = await store.create('properties', { name: 'Hilltop Homestay', type: 'BnB', address: '8 Coffee Estate Road', city: 'Coorg', status: 'Vacant' });
-  await store.create('rooms', { property_id: bnb.id, room_number: 'Garden Suite', sharing: 'Private room', total_beds: 0, rent_per_room: 3500 });
+  await store.create('bills', { pg_id: sunrise.id, category: 'Electricity', provider: 'BESCOM', amount: 18400, due_date: addDays(today, 3) });
+  await store.create('bills', { pg_id: sunrise.id, category: 'Groceries', provider: 'Metro Wholesale', amount: 22500, due_date: addDays(today, -2) });
+  await store.create('bills', { pg_id: lotus.id, category: 'Salary', provider: 'Cook and cleaner', amount: 24000, due_date: addDays(today, -10), status: 'Paid', paid_on: addDays(today, -10) });
 
-  await store.create('bills', { property_id: p1.id, category: 'Electricity', provider: 'BESCOM', amount: 1840, bill_date: addDays(today, -12), due_date: addDays(today, 3), payer: 'Tenant' });
-  await store.create('bills', { property_id: p2.id, category: 'Property Tax', amount: 12500, due_date: addDays(today, -4), payer: 'Owner' });
-  await store.create('bills', { property_id: p1.id, category: 'Maintenance', provider: 'Society', amount: 3000, due_date: addDays(today, -20), status: 'Paid', paid_on: addDays(today, -22) });
-
-  await store.create('documents', { title: 'Anita – Aadhaar card', doc_type: 'ID Proof', tenant_id: t1.id, verified: true, verified_by: 'Ravi', verified_on: addDays(today, -199) });
-  await store.create('documents', { title: 'Karan – Police verification', doc_type: 'Police Verification', tenant_id: t2.id, verified: false });
-  await store.create('documents', { title: 'Lake View rent agreement', doc_type: 'Rent Agreement', agreement_id: a2.id, property_id: p2.id, verified: true, expires_on: a2.end_date });
-
-  await store.create('schedules', { title: 'Fix kitchen tap leak', kind: 'Maintenance', starts_at: `${addDays(today, 1)}T10:00`, ends_at: `${addDays(today, 1)}T11:00`, property_id: p1.id, contact_id: plumber.id });
-  await store.create('schedules', { title: 'Show shop to Neha', kind: 'Property Visit', starts_at: `${addDays(today, 2)}T17:30`, property_id: p3.id });
+  await store.create('documents', { title: 'Rahul – Aadhaar card', doc_type: 'ID Proof', guest_id: g1.id, verified: true, verified_by: 'Mohan', verified_on: addDays(today, -94) });
+  await store.create('documents', { title: 'Arjun – Police verification', doc_type: 'Police Verification', guest_id: g2.id, verified: false });
+  await store.create('documents', { title: 'Sunrise PG – Trade licence', doc_type: 'Licence', pg_id: sunrise.id, verified: true, expires_on: addDays(today, 20) });
 }
 
 module.exports = { loadSampleData, isEmpty };

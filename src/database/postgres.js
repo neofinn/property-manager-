@@ -13,7 +13,9 @@ function numbered(sql) {
   return sql.replace(/\?/g, () => `$${++n}`);
 }
 
-function createPool(connectionString, { poolSize } = {}) {
+// `searchPath` (e.g. 'pgm') keeps an app's platform tables in their own schema,
+// so two apps can share one database.
+function createPool(connectionString, { poolSize, searchPath } = {}) {
   const pg = require('pg');
   // Counts and sums come back as int8/numeric strings; the app expects numbers.
   pg.types.setTypeParser(20, (v) => Number(v));
@@ -27,6 +29,13 @@ function createPool(connectionString, { poolSize } = {}) {
     ssl: local || /sslmode=disable/.test(connectionString) ? false : { rejectUnauthorized: false },
   });
   pool.on('error', (err) => console.error('Postgres pool error:', err.message));
+  if (searchPath) {
+    if (!/^[a-z_][a-z0-9_]*$/.test(searchPath)) throw new Error(`Bad schema name: ${searchPath}`);
+    pool.basePath = searchPath;
+    pool.on('connect', (client) => {
+      client.query(`SET search_path TO ${searchPath}`).catch((err) => console.error('search_path:', err.message));
+    });
+  }
   return pool;
 }
 
@@ -89,7 +98,7 @@ async function withSchema(pool, schema, fn) {
     await client.query(`CREATE SCHEMA IF NOT EXISTS ${schema}; SET search_path TO ${schema}`);
     return await fn(new PostgresDatabase(client));
   } finally {
-    await client.query('RESET search_path').catch(() => {});
+    await client.query(pool.basePath ? `SET search_path TO ${pool.basePath}` : 'RESET search_path').catch(() => {});
     client.release();
   }
 }

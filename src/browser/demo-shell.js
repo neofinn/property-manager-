@@ -21,7 +21,7 @@ function setStatus(text, tone = '') {
 
 function showFatal(message) {
   $('#demo-splash').hidden = false;
-  $('#demo-splash').innerHTML = `<div class="auth-card"><h1>Property Manager</h1><p class="form-error"></p></div>`;
+  $('#demo-splash').innerHTML = `<div class="auth-card"><h1>PG Manager</h1><p class="form-error"></p></div>`;
   $('#demo-splash .form-error').textContent = message;
 }
 

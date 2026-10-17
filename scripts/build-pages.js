@@ -1,8 +1,9 @@
 'use strict';
 
-// Builds dist-pages/: the app's pages as static files for GitHub Pages (or any
+// Builds dist-pages/: PG Manager's pages as static files for GitHub Pages (or any
 // static host), talking to the API on a Supabase Edge Function.
-// Usage: PM_API_BASE=https://<ref>.supabase.co/functions/v1/api npm run build:pages
+// Usage: PM_API_BASE=https://<ref>.supabase.co/functions/v1/pg-manager/api npm run build:pages
+// Published under /<repo>/pg/ on the gh-pages branch, next to Property Manager.
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -10,7 +11,7 @@ const path = require('node:path');
 const root = path.join(__dirname, '..');
 const pub = path.join(root, 'public');
 const out = path.join(root, 'dist-pages');
-const apiBase = process.env.PM_API_BASE || 'https://xlrnrlhrbuobzqxkinkc.supabase.co/functions/v1/api';
+const apiBase = process.env.PM_API_BASE || 'https://xlrnrlhrbuobzqxkinkc.supabase.co/functions/v1/pg-manager/api';
 
 fs.rmSync(out, { recursive: true, force: true });
 fs.mkdirSync(out, { recursive: true });

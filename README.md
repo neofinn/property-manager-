@@ -1,50 +1,46 @@
-# Property Manager CRM
+# PG Manager
 
-A self-hosted CRM for landlords and property managers. It keeps records of
-**properties, tenants, rent agreements, rent payments, bills, contacts,
-verified documents and timings**, and sends **rent reminders** to tenants.
+A simple app for running **PGs and hostels**, made from the Property Manager
+CRM (which stays on its own branch). There are **no rooms**: each PG has its
+**total beds** and its **bed prices** as qty × rate lines, the beds are created
+for you, and every occupied bed has a **guest record** with all their details.
 
-No dependencies: it runs on Node.js alone, using the built-in SQLite module.
+Live beta: **https://neofinn.github.io/property-manager-/pg/**
 
 ## Features
 
-| Section | What it tracks |
+| Section | What it does |
 | --- | --- |
-| **Dashboard** | Occupancy, rent collected vs expected this month, overdue rent, unpaid bills, and everything that needs attention |
-| **Reminders** | Rent due, overdue and upcoming; bills due; agreements expiring within 60 days; documents expiring or awaiting verification; upcoming appointments. Look ahead from today up to 60 days |
-| **Properties** | Name, type, address, owner. A **PG / Hostel** has total beds, a bed price (the default for its rooms), **bed prices** as lines of bed type, **qty × rate = amount** with a monthly total, added with **+ Add line** (e.g. 3-sharing · 9 × ₹6,000, 1st floor AC · 6 × ₹9,000), live occupied / vacant bed counts, who it's for (gents, ladies, students…), the meal plan, gate in-time, visiting hours and the warden. Every other type (Independent House, BnB, Villa, Apartment, SOHO, Office, Office Cabin, Co-working, Shop, Showroom, Warehouse / Godown, Commercial, Land) has area, furnishing, expected rent, a vacant / occupied status and **floor / unit prices** as lines of floor, area and rent, added with **+ Add line**. The form only shows the fields for the chosen type |
-| **Bed board** | One screen for each PG/BnB showing every room and bed: vacant, occupied (with the tenant's name) or reserved/under maintenance. Click a vacant bed to add a tenant to it |
-| **Rooms** | Room number, floor, sharing (single/double/triple…), number of beds, rent per bed or per room, AC, attached bathroom. Beds are created automatically |
-| **Beds** | Each bed in a room, with its own rent and status, and who is staying in it |
-| **Tenants** | Contact details, property, room and bed (for PG/BnB) or unit, move-in and move-out dates, ID type and number, emergency contact |
-| **Agreements** | Property (and room/bed for PG), tenant, start and end dates, monthly rent, security deposit, rent due day, notice period |
-| **Rent payments** | Payments per rent month, with method (cash/UPI/bank/cheque/card) and transaction reference. Partial payments are supported |
-| **Bills** | Electricity, water, gas, internet, maintenance, property tax, insurance, repairs. Due dates, paid by owner or tenant, paid status |
-| **Documents** | Uploaded ID proofs, police verification, agreements, deeds and receipts linked to a tenant, property or agreement. Tracks who verified each one and when, and its expiry date |
-| **Contacts** | Owners, plumbers, electricians, agents, lawyers and others, with their available hours |
-| **Timings** | Property visits, maintenance, inspections, rent collection, move-in and move-out appointments |
+| **Dashboard** | Beds occupied / vacant / booked, active guests, rent collected vs expected this month, overdue rent, deposits held, unpaid expenses, and everything that needs attention |
+| **Bed board** | Every bed of every PG, grouped by bed type: vacant (with its rate), occupied (guest's name), booked, or under maintenance. Tap a vacant bed to check a guest in; tap an occupied bed to open the guest |
+| **Reminders** | Rent due, overdue and upcoming, with one-click WhatsApp / SMS / Email; guests checking out and bookings arriving in the next 7 days; expenses due; documents expiring or awaiting verification |
+| **Guests** | The CRM: name, phone, PG and bed, status (Active / Booked / Checked out), check-in and check-out dates, monthly rent, deposit, rent due day, email, gender, date of birth, occupation, college / company, food preference, permanent address, ID type and number, ID proof and photo uploads, police verification, emergency contact, vehicle number and notes. **Check in**, **Check out** (frees the bed) and **+ Payment** buttons |
+| **PGs** | Name, address, city, who it's for, **total beds**, **bed prices** (bed type · qty · rate / bed = amount, with a monthly total, added with **+ Add line**), default bed rate, rent due day, meals, gate in-time, visiting hours, warden and owner |
+| **Beds** | Created from the PG's price lines (B1, B2, …) with their type and rate; each can be edited or marked under maintenance / blocked |
+| **Payments** | Rent, deposit, electricity, food or other payments per guest and month, with method and transaction reference. Partial payments are supported |
+| **Expenses** | Electricity, water, groceries, salaries, rent to owner, repairs… with due dates and paid status |
+| **Documents** | ID proofs, police verification, agreements and licences for a guest or PG, with who verified them and expiry dates |
+| **Staff & contacts** | Owner, warden, cook, cleaner, security, plumber, electrician, grocery… with their available hours |
 
-### PG / hostel and BnB: room-wise and bed-wise
+### Beds and prices
 
-PG and hostel tenants are tracked bed by bed, and BnB guests room by room:
-
-1. Add a property with type **PG / Hostel** or **BnB**.
-2. Add its rooms with the number of beds and the rent per bed. Beds named *Bed 1, Bed 2…* are created for you, and you can rename them, for example to *Upper* or *Window*.
-3. Assign tenants and agreements to a bed, or to a room that has no beds. In the form, the Room list shows only that property's rooms and the Bed list shows only that room's beds and who is in each. Picking a bed fills in the room and property. A new agreement takes the bed's rent unless you enter one.
-
-The app won't put two active tenants on one bed, or give a bed two active agreements whose dates overlap. When an agreement covering today is saved, the tenant's room and bed are updated to match. Rent reminders name the exact bed, for example *"Sunrise PG, Room 101, Bed 2"*. The dashboard shows how many PG beds are filled.
+- Fill **Bed prices** with one line per bed type, e.g. `3-sharing · 6 × ₹6,500`
+  and `Single AC · 2 × ₹14,000`. Leave **Total beds** empty and it becomes the
+  sum of the quantities (8 here); set it higher and the extra beds use the
+  **Default bed rate**.
+- Beds are added, never removed, when you raise the numbers. Changing a line's
+  rate updates the beds of that type. A guest keeps the rent agreed at check-in.
+- A bed holds one guest at a time (an active guest or a booking). Checking a
+  guest out (status **Checked out**) frees the bed and fills in the check-out date.
 
 ### Rent reminders
 
-For every active agreement, the app works out the rent due each month from the
-agreement's due day. In the first month, rent is due on the move-in date. It
-then subtracts what has been paid for that month. For anything outstanding it
-prepares a ready-to-send message with one-click **WhatsApp**, **SMS** and
-**Email** buttons, plus **Copy text**. Each reminder you send is logged, so you
-can see when a tenant was last reminded. **Record payment** opens a payment form
-already filled in with the outstanding amount.
-
-Agreements that are about to expire get a renewal reminder in the same way.
+For every active guest, rent is due each month on their due day (or the PG's).
+The first month's rent is due on the check-in date, and nothing is due after
+the check-out month. Rent payments for that month are subtracted; anything
+outstanding gets a ready-to-send message with **WhatsApp**, **SMS**, **Email**
+and **Copy text** buttons. Each reminder you send is logged. **Record payment**
+opens a payment form already filled in.
 
 ### Accounts
 
@@ -64,7 +60,7 @@ Set `ADMIN_PASSWORD` and open `/admin`. It is turned off (404) when no admin
 password is set.
 
 - **Overview:** number of companies, new sign-ups this week and month, companies
-  active this week, properties, tenants and PG beds across the platform, rent
+  active this week, PGs, guests and beds across the platform, rent
   recorded this month, open feedback, and a chart of daily sign-ups.
 - **Companies:** every company with its usage and last activity. Actions:
   export its data as JSON, sign it out everywhere, reset its password,
@@ -108,8 +104,11 @@ Tables are created automatically on first start. In Supabase's **Table editor**:
 
 | Schema | What's in it |
 | --- | --- |
-| `public` | `companies` (accounts), `sessions`, `feedback`, `settings`, `admin_sessions`, `admin_log` |
-| `company_1`, `company_2`, … | One schema per company: `properties`, `tenants`, `rooms`, `beds`, `agreements`, `rent_payments`, `bills`, `documents`, `contacts`, `schedules`, `files` (uploaded documents), `reminder_log` |
+| `pgm` | `companies` (accounts), `sessions`, `feedback`, `settings`, `admin_sessions`, `admin_log` |
+| `pgm_company_1`, `pgm_company_2`, … | One schema per company: `pgs`, `beds`, `guests`, `payments`, `bills` (expenses), `documents`, `contacts`, `files` (uploads), `reminder_log` |
+
+Nothing goes in `public`, so PG Manager can share a Supabase project with the
+Property Manager app (which uses `public` and `company_<id>`).
 
 The app connects as the database owner and enforces access itself, so keep
 the connection string secret and leave Supabase's public API keys unused.
@@ -123,31 +122,30 @@ over **HTTPS**, which every host below does for you.
 
 ### Live: GitHub Pages + Supabase (current hosting)
 
-The beta runs at **https://neofinn.github.io/property-manager-/** with no server
-to manage:
+The beta runs at **https://neofinn.github.io/property-manager-/pg/** with no
+server to manage, next to Property Manager (which is at the site root):
 
-- **Pages** (`dist-pages/`, built by `npm run build:pages`) are published on the
-  `gh-pages` branch, which GitHub Pages serves.
-- **API** runs as the Supabase Edge Function `api` in the *Property Manager*
-  project. `npm run build:edge` bundles `src/` into
-  `supabase/functions/api/index.js`; the deployed function is a one-line loader
-  that imports that file from this repository at a fixed commit.
-- **Data** is in the same Supabase project's Postgres (connection provided to the
-  function automatically as `SUPABASE_DB_URL`).
-- **Admin page:** `https://neofinn.github.io/property-manager-/admin.html`. It works once
-  the function secret `ADMIN_PASSWORD` is set (Supabase → Edge Functions → Secrets).
+- **Pages** (`dist-pages/`, built by `npm run build:pages`) are published in the
+  `pg/` folder of the `gh-pages` branch.
+- **API** runs as the Supabase Edge Function `pg-manager` in the *Property
+  Manager* Supabase project, at `/functions/v1/pg-manager/api/…`.
+  `npm run build:edge` bundles `src/` into `supabase/functions/pg-manager/index.js`;
+  the deployed function is a one-line loader that imports that file from this
+  branch at a fixed commit.
+- **Data** is in the same project's Postgres, in the `pgm` schemas.
+- **Admin page:** `https://neofinn.github.io/property-manager-/pg/admin.html`. It
+  works once the function secret `PGM_ADMIN_PASSWORD` (or `ADMIN_PASSWORD`,
+  shared with Property Manager) is set (Supabase → Edge Functions → Secrets).
 
-Because pages and API are on different sites, logins use a token in a request
-header (`X-Session` / `X-Admin-Session`, kept in the browser's storage) instead
-of a cookie, and the function only accepts the page origin set in
-`ALLOWED_ORIGINS` (default `https://neofinn.github.io`).
+Logins use a token in a request header (`X-Session` / `X-Admin-Session`, kept in
+the browser's storage under `pgm-…` keys, separate from Property Manager's).
 
 To ship a change:
 
-1. `npm run build:edge`, commit and push, then redeploy the `api` function with
-   its import pointing at the new commit SHA.
-2. `npm run build:pages` and replace the contents of the `gh-pages` branch with
-   `dist-pages/`.
+1. `npm run build:edge`, commit and push, then redeploy the `pg-manager`
+   function with its import pointing at the new commit SHA.
+2. `npm run build:pages` and replace the `pg/` folder of the `gh-pages` branch
+   with `dist-pages/`.
 
 ### claude.ai demo link (no server needed)
 
@@ -182,11 +180,11 @@ clock, use one of the hosts below.
 
 ### Docker image from GitHub
 
-Every push to `main` runs the tests, then builds and publishes an image to
+Every push to the `pg-manager` branch runs the tests, then builds and publishes an image to
 GitHub Container Registry. Run it on any machine with Docker:
 
 ```bash
-docker run -d -p 3000:3000 -v pm-data:/data ghcr.io/neofinn/property-manager:latest
+docker run -d -p 3000:3000 -v pgm-data:/data ghcr.io/neofinn/property-manager-pg-manager:latest
 ```
 
 Then open http://localhost:3000. If the repository is private, run
@@ -211,9 +209,9 @@ to wake on the next visit.
 ### Any Docker host (Railway, Fly.io, a VPS…)
 
 ```bash
-docker build -t property-manager .
+docker build -t pg-manager .
 docker run -d -p 3000:3000 \
-  -e DATABASE_URL='postgresql://…' -e ADMIN_PASSWORD='…' -e TRUST_PROXY=1 property-manager
+  -e DATABASE_URL='postgresql://…' -e ADMIN_PASSWORD='…' -e TRUST_PROXY=1 pg-manager
 ```
 
 Without `DATABASE_URL`, mount a volume at `/data` (`-v pm-data:/data`). Set `TRUST_PROXY=1` when the app runs behind
@@ -250,7 +248,7 @@ src/schema.js        Entity definitions (fields, types, relations); the UI and A
 src/database/        SQLite and Postgres backends behind one async interface
 src/db.js            Creates and migrates a company's tables
 src/store.js         Validation and CRUD
-src/reminders.js     Rent, bill, agreement, document and schedule reminders, plus dashboard stats
+src/reminders.js     Rent, expense, check-out/arrival and document reminders, plus dashboard stats
 src/api.js           The company API, shared by the server and the claude.ai demo
 src/app.js           HTTP server: routing, cookies, static files
 src/platform.js      Companies, logins, feedback, settings, admin actions, per-company storage
@@ -273,8 +271,8 @@ test/                API tests (node:test)
 
 All endpoints return JSON. They need a logged-in session cookie, except
 `/api/auth/*`, and requests other than GET must send the header
-`X-Requested-With: fetch`. `:resource` is one of `properties`, `tenants`,
-`rooms`, `beds`, `agreements`, `rent_payments`, `bills`, `contacts`, `documents`, `schedules`.
+`X-Requested-With: fetch`. `:resource` is one of `pgs`, `beds`, `guests`,
+`payments`, `bills` (expenses), `documents`, `contacts`.
 
 | Method & path | Description |
 | --- | --- |

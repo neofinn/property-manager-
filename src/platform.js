@@ -5,8 +5,9 @@
 // data lives.
 //
 // Storage:
-//   - DATABASE_URL set (e.g. Supabase Postgres): platform tables in `public`,
-//     each company's CRM tables in schema `company_<id>`.
+//   - DATABASE_URL set (e.g. Supabase Postgres): platform tables in schema
+//     `pgm`, each company's tables in schema `pgm_company_<id>`, so PG Manager
+//     can share a database with the Property Manager app.
 //   - otherwise SQLite: DATA_DIR/accounts.sqlite plus DATA_DIR/companies/<id>/crm.sqlite.
 
 const fs = require('node:fs');
@@ -66,6 +67,8 @@ function createLock() {
   };
 }
 
+const PG_SCHEMA = 'pgm';
+
 const SETTINGS_DEFAULTS = { signups_open: '1', invite_code: '', notice: '', read_only: '0' };
 
 class Platform {
@@ -79,7 +82,7 @@ class Platform {
     this.readyTenants = new Set(); // Postgres: schemas already migrated by this process
     this.tenantInit = new Map(); // Postgres: companyId -> migration in progress
     if (databaseUrl) {
-      this.pool = createPool(databaseUrl, { poolSize });
+      this.pool = createPool(databaseUrl, { poolSize, searchPath: PG_SCHEMA });
       this.db = new PostgresDatabase(this.pool);
       this.storage = 'postgres';
     } else {
@@ -91,6 +94,7 @@ class Platform {
 
   async init() {
     const { dialect } = this.db;
+    if (this.storage === 'postgres') await this.db.exec(`CREATE SCHEMA IF NOT EXISTS ${PG_SCHEMA}`);
     await this.db.exec(`
       CREATE TABLE IF NOT EXISTS companies (
         ${dialect.idColumn},
@@ -158,7 +162,7 @@ class Platform {
   async withTenant(companyId, fn) {
     const id = Number(companyId);
     if (this.storage === 'postgres') {
-      return withSchema(this.pool, `company_${id}`, async (db) => {
+      return withSchema(this.pool, `${PG_SCHEMA}_company_${id}`, async (db) => {
         if (!this.readyTenants.has(id)) {
           // Concurrent first requests share one migration run.
           if (!this.tenantInit.has(id)) {
@@ -380,15 +384,14 @@ class Platform {
     return this.withTenant(companyId, async (db) => {
       const n = async (sql, ...p) => Number((await db.get(sql, ...p)).n) || 0;
       return {
-        properties: await n('SELECT COUNT(*) AS n FROM properties'),
-        tenants: await n("SELECT COUNT(*) AS n FROM tenants WHERE status = 'Active'"),
-        agreements: await n("SELECT COUNT(*) AS n FROM agreements WHERE status = 'Active'"),
+        pgs: await n('SELECT COUNT(*) AS n FROM pgs'),
+        guests: await n("SELECT COUNT(*) AS n FROM guests WHERE status = 'Active'"),
         beds: await n('SELECT COUNT(*) AS n FROM beds'),
         occupied_beds: await n(
-          "SELECT COUNT(*) AS n FROM beds b WHERE EXISTS (SELECT 1 FROM tenants x WHERE x.bed_id = b.id AND x.status = 'Active')",
+          "SELECT COUNT(*) AS n FROM beds b WHERE EXISTS (SELECT 1 FROM guests g WHERE g.bed_id = b.id AND g.status = 'Active')",
         ),
         documents: await n('SELECT COUNT(*) AS n FROM documents'),
-        rent_collected_this_month: await n('SELECT COALESCE(SUM(amount), 0) AS n FROM rent_payments WHERE period = ?', localToday().slice(0, 7)),
+        rent_collected_this_month: await n("SELECT COALESCE(SUM(amount), 0) AS n FROM payments WHERE kind = 'Rent' AND period = ?", localToday().slice(0, 7)),
       };
     });
   }
@@ -410,7 +413,7 @@ class Platform {
     }
 
     const totals = {};
-    for (const key of ['properties', 'tenants', 'agreements', 'beds', 'occupied_beds', 'documents', 'rent_collected_this_month']) {
+    for (const key of ['pgs', 'guests', 'beds', 'occupied_beds', 'documents', 'rent_collected_this_month']) {
       totals[key] = rows.reduce((sum, r) => sum + (Number(r.stats?.[key]) || 0), 0);
     }
 
@@ -479,7 +482,7 @@ class Platform {
       throw new HttpError(400, 'Type the company name exactly to confirm', { confirm: 'Company name does not match' });
     }
     if (this.storage === 'postgres') {
-      await this.db.exec(`DROP SCHEMA IF EXISTS company_${Number(row.id)} CASCADE`);
+      await this.db.exec(`DROP SCHEMA IF EXISTS ${PG_SCHEMA}_company_${Number(row.id)} CASCADE`);
       this.readyTenants.delete(Number(row.id));
     } else {
       const tenant = this.tenants.get(Number(row.id));
