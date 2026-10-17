@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#2f6f5e">
+  <title>PG Manager – Sign in</title>
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml">
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="apple-touch-icon" href="./icon-192.png">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body class="auth-page">
+  <main class="auth-card">
+    <div class="auth-brand">
+      <img src="./favicon.svg" alt="" width="40" height="40">
+      <div>
+        <h1>PG Manager <span class="beta">Beta</span></h1>
+        <p class="muted">Beds, guests, rent and reminders for your PG</p>
+      </div>
+    </div>
+
+    <div class="auth-tabs" role="tablist">
+      <a href="./login.html" id="tab-login" role="tab">Log in</a>
+      <a href="./signup.html" id="tab-signup" role="tab">Sign up</a>
+    </div>
+
+    <div class="form-error" id="auth-error" hidden></div>
+
+    <form id="login-form" class="auth-form" novalidate hidden>
+      <div class="field">
+        <label for="login-phone">Phone number</label>
+        <input id="login-phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="98765 43210" required>
+      </div>
+      <div class="field">
+        <label for="login-password">Password</label>
+        <input id="login-password" name="password" type="password" autocomplete="current-password" required>
+      </div>
+      <button class="btn primary block" type="submit">Log in</button>
+      <p class="muted small center">New here? <a href="./signup.html">Create an account</a></p>
+    </form>
+
+    <form id="signup-form" class="auth-form" novalidate hidden>
+      <div class="field">
+        <label for="signup-company">Company name</label>
+        <input id="signup-company" name="company_name" autocomplete="organization" placeholder="e.g. Sunrise Properties" required>
+      </div>
+      <div class="field">
+        <label for="signup-manager">Manager name</label>
+        <input id="signup-manager" name="manager_name" autocomplete="name" placeholder="Your full name" required>
+      </div>
+      <div class="field">
+        <label for="signup-phone">Phone number</label>
+        <input id="signup-phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="98765 43210" required>
+        <span class="hint">You'll log in with this number. Add + and the country code if you're outside India.</span>
+      </div>
+      <div class="field">
+        <label for="signup-password">Password</label>
+        <input id="signup-password" name="password" type="password" autocomplete="new-password" minlength="8" required>
+        <span class="hint">At least 8 characters</span>
+      </div>
+      <div class="field">
+        <label for="signup-password2">Confirm password</label>
+        <input id="signup-password2" name="password2" type="password" autocomplete="new-password" required>
+      </div>
+      <div class="field" id="invite-field" hidden>
+        <label for="signup-invite">Beta invite code</label>
+        <input id="signup-invite" name="invite_code" autocomplete="off">
+      </div>
+      <button class="btn primary block" type="submit">Create account</button>
+      <p class="muted small center">Already have an account? <a href="./login.html">Log in</a></p>
+    </form>
+  </main>
+  <script src="./config.js"></script>
+  <script src="./api-client.js"></script>
+  <script src="./auth.js"></script>
+</body>
+</html>

@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PG Manager</title>
+  <meta name="theme-color" content="#2f6f5e">
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml">
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="apple-touch-icon" href="./icon-192.png">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <button class="menu-btn" id="menu-btn" aria-label="Toggle menu">☰</button>
+    <h1>PG Manager <span class="beta">Beta</span></h1>
+    <div class="account" id="account">
+      <button class="btn small" id="feedback-btn" type="button">Feedback</button>
+      <span class="account-name" id="account-name"></span>
+      <button class="btn small" id="logout-btn" type="button">Log out</button>
+    </div>
+  </header>
+  <p class="notice-banner" id="notice-banner" hidden></p>
+  <div class="layout">
+    <nav class="sidebar" id="sidebar" aria-label="Sections"></nav>
+    <main id="main" tabindex="-1"></main>
+  </div>
+
+  <dialog id="dialog">
+    <form id="record-form" method="dialog" novalidate>
+      <header class="dialog-head">
+        <h2 id="dialog-title"></h2>
+        <button type="button" class="icon-btn" data-close aria-label="Close">✕</button>
+      </header>
+      <div class="form-error" id="form-error" hidden></div>
+      <div class="form-grid" id="form-fields"></div>
+      <footer class="dialog-foot">
+        <button type="button" class="btn" data-close>Cancel</button>
+        <button type="submit" class="btn primary" id="save-btn">Save</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <dialog id="feedback-dialog">
+    <form id="feedback-form" method="dialog" novalidate>
+      <header class="dialog-head">
+        <h2>Send feedback</h2>
+        <button type="button" class="icon-btn" data-close-feedback aria-label="Close">✕</button>
+      </header>
+      <div class="feedback-body">
+        <p class="muted">Thanks for testing the beta! Tell us what's confusing, broken, or missing.</p>
+        <textarea name="message" rows="6" required aria-label="Your feedback" placeholder="What happened? What did you expect?"></textarea>
+      </div>
+      <footer class="dialog-foot">
+        <button type="button" class="btn" data-close-feedback>Cancel</button>
+        <button type="submit" class="btn primary">Send</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <dialog id="confirm-dialog" class="confirm-dialog">
+    <form method="dialog">
+      <p id="confirm-message"></p>
+      <footer class="dialog-foot">
+        <button class="btn" value="cancel" id="confirm-cancel">Cancel</button>
+        <button class="btn danger-solid" value="ok" id="confirm-ok">Delete</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+  <script src="./config.js"></script>
+  <script src="./api-client.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>

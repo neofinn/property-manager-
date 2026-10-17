@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Platform Admin – PG Manager</title>
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body class="admin">
+  <section class="auth-page" id="admin-login" hidden>
+    <form class="auth-card auth-form" id="admin-login-form" novalidate>
+      <div class="auth-brand">
+        <img src="./favicon.svg" alt="" width="40" height="40">
+        <div>
+          <h1>Platform admin</h1>
+          <p class="muted">For the PG Manager team only</p>
+        </div>
+      </div>
+      <div class="form-error" id="admin-login-error" hidden></div>
+      <div class="field">
+        <label for="admin-password">Admin password</label>
+        <input id="admin-password" name="password" type="password" autocomplete="current-password" required>
+      </div>
+      <button class="btn primary block" type="submit">Log in</button>
+    </form>
+  </section>
+
+  <div id="admin-app" hidden>
+    <header class="topbar">
+      <h1>Platform admin</h1>
+      <span class="pill" id="storage-badge"></span>
+      <div class="account">
+        <a class="btn small" href="./index.html">Open app</a>
+        <button class="btn small" id="admin-logout" type="button">Log out</button>
+      </div>
+    </header>
+    <nav class="admin-tabs" aria-label="Admin sections">
+      <a href="#overview">Overview</a>
+      <a href="#companies">Companies</a>
+      <a href="#feedback">Feedback</a>
+      <a href="#settings">Controls</a>
+      <a href="#log">Activity log</a>
+    </nav>
+    <main class="admin-main" id="admin-main" tabindex="-1"></main>
+  </div>
+
+  <dialog id="admin-dialog" class="confirm-dialog">
+    <form method="dialog" id="admin-dialog-form" novalidate>
+      <header class="dialog-head"><h2 id="admin-dialog-title"></h2></header>
+      <div class="feedback-body">
+        <p id="admin-dialog-text"></p>
+        <div class="field" id="admin-dialog-field" hidden>
+          <label for="admin-dialog-input" id="admin-dialog-label"></label>
+          <input id="admin-dialog-input" autocomplete="off">
+        </div>
+      </div>
+      <footer class="dialog-foot">
+        <button class="btn" value="cancel" formnovalidate>Cancel</button>
+        <button class="btn primary" value="ok" id="admin-dialog-ok">OK</button>
+      </footer>
+    </form>
+  </dialog>
+
+  <div class="chart-tip" id="chart-tip" role="status" hidden></div>
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+  <script src="./config.js"></script>
+  <script src="./api-client.js"></script>
+  <script src="./admin.js"></script>
+</body>
+</html>
