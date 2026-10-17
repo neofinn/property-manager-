@@ -93,6 +93,17 @@ class Platform {
   }
 
   async init() {
+    try {
+      return await this.createTables();
+    } catch (err) {
+      // Another process created the same tables at the same moment: try again.
+      if (err.code !== '23505' && err.code !== '42P07') throw err;
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      return this.createTables();
+    }
+  }
+
+  async createTables() {
     const { dialect } = this.db;
     if (this.storage === 'postgres') await this.db.exec(`CREATE SCHEMA IF NOT EXISTS ${PG_SCHEMA}`);
     await this.db.exec(`

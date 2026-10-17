@@ -52,7 +52,15 @@ function createEdgeHandler(options) {
     adminPassword: options.adminPassword || '',
     poolSize: options.poolSize,
   });
-  const ready = platform.init();
+  // Retried on the next request if it fails (e.g. two cold starts racing to
+  // create the tables), instead of leaving this instance broken.
+  let ready = null;
+  const start = () =>
+    (ready = platform.init().catch((err) => {
+      ready = null;
+      throw err;
+    }));
+  start().catch((err) => console.error('init:', err.message));
   const currency = options.currency || 'INR';
   const allowed = new Set(options.allowedOrigins || []);
 
@@ -94,7 +102,7 @@ function createEdgeHandler(options) {
   async function handle(request) {
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors(request) });
     try {
-      await ready;
+      await (ready || start());
       const url = new URL(request.url);
       const at = url.pathname.indexOf('/api/');
       if (at < 0) return json(request, 200, { ok: true, service: 'property-manager' });
@@ -181,10 +189,10 @@ function createEdgeHandler(options) {
     }
   }
 
-  handle.ready = ready;
+  handle.ready = ready.catch(() => start());
   handle.platform = platform;
   handle.close = async () => {
-    await ready.catch(() => {});
+    await (ready || Promise.resolve()).catch(() => {});
     await platform.close();
   };
   return handle;
@@ -289,6 +297,17 @@ class Platform {
   }
 
   async init() {
+    try {
+      return await this.createTables();
+    } catch (err) {
+      // Another process created the same tables at the same moment: try again.
+      if (err.code !== '23505' && err.code !== '42P07') throw err;
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      return this.createTables();
+    }
+  }
+
+  async createTables() {
     const { dialect } = this.db;
     if (this.storage === 'postgres') await this.db.exec(`CREATE SCHEMA IF NOT EXISTS ${PG_SCHEMA}`);
     await this.db.exec(`
