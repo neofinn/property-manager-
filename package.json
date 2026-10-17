@@ -1,0 +1,26 @@
+{
+  "name": "property-manager",
+  "version": "1.0.0",
+  "description": "Property manager CRM: properties, tenants, agreements, rent, bills, contacts, verified documents, timings and rent reminders.",
+  "private": true,
+  "main": "server.js",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env server.js",
+    "seed": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env scripts/seed.js",
+    "test": "node --disable-warning=ExperimentalWarning --test test/*.test.js",
+    "feedback": "node --disable-warning=ExperimentalWarning --env-file-if-exists=.env scripts/feedback.js",
+    "build:demo": "node scripts/build-demo.js",
+    "build:edge": "node scripts/build-edge.js",
+    "build:pages": "node scripts/build-pages.js"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "sql.js": "^1.10.3"
+  },
+  "dependencies": {
+    "pg": "^8.13.1"
+  }
+}

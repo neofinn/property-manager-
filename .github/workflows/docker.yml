@@ -1,0 +1,41 @@
+name: Docker image
+
+# Builds the app image and publishes it to GitHub Container Registry:
+#   docker run -p 3000:3000 -v pm-data:/data ghcr.io/<owner>/<repo>:latest
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: image
+        # Image names must be lower case and can't end in "-" (neofinn/property-manager- -> neofinn/property-manager).
+        run: |
+          name="${GITHUB_REPOSITORY,,}"
+          echo "name=ghcr.io/$(echo "$name" | sed 's/[-_.]*$//')" >> "$GITHUB_OUTPUT"
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ steps.image.outputs.name }}:latest
+            ${{ steps.image.outputs.name }}:${{ github.sha }}

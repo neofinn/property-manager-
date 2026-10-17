@@ -1,0 +1,23 @@
+# One-click deploy on Render: New → Blueprint → pick this repository.
+# All data lives in your Supabase (Postgres) database, so the free instance type
+# is enough: nothing is lost when Render restarts or sleeps the app.
+services:
+  - type: web
+    name: property-manager
+    runtime: docker
+    plan: free
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: DATABASE_URL
+        sync: false # Supabase → Connect → Session pooler connection string
+      - key: ADMIN_PASSWORD
+        sync: false # password for the /admin developer area
+      - key: BETA_INVITE_CODE
+        sync: false # optional; can also be set later in /admin → Controls
+      - key: TRUST_PROXY
+        value: "1"
+      - key: CURRENCY
+        value: INR
+      - key: DEFAULT_COUNTRY_CODE
+        value: "91"
